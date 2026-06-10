@@ -39,17 +39,20 @@ That file is what we use later to improve height accuracy.
 ```bash
 python3 examples/vision/grid_laser_calibration.py inspect-grid \
   --image test_camera.jpg \
-  --grid-rows 12 \
-  --grid-cols 7 \
-  --square-size-cm 15
+  --roi 700,420,320,390 \
+  --min-line-length 25
 ```
 
 Good result:
 
 ```text
 grid_found=true
-point_count=84
+point_count=76
 ```
+
+The current target is an L-shaped grid: lower `7x7` boxes plus the top `4x2`
+box extension. Lower labels are `row,col` such as `1,1`. Top-extension labels
+are `Trow,col` such as `T1,1`.
 
 ### 2. Capture Grid Images
 
@@ -57,9 +60,8 @@ point_count=84
 python3 examples/vision/grid_laser_calibration.py capture-grid \
   --count 200 \
   --interval-sec 0.1 \
-  --grid-rows 12 \
-  --grid-cols 7 \
-  --square-size-cm 15
+  --roi 700,420,320,390 \
+  --min-line-length 25
 ```
 
 Saved to:
@@ -75,28 +77,29 @@ python3 examples/vision/grid_laser_calibration.py calibrate \
   --image-dir camera_calibration_runs/latest/images \
   --output camera_calibration_runs/latest/calibration.json \
   --min-accepted 30 \
-  --grid-rows 12 \
-  --grid-cols 7 \
-  --square-size-cm 15
+  --roi 700,420,320,390 \
+  --min-line-length 25
 ```
 
 ### 4. Capture Laser-Labeled Samples
 
-Point the laser into a grid box and enter the box as `row,col`.
+Point the laser into a grid box and enter the box label. Use `row,col` for the
+lower rectangle and `Trow,col` for the top extension. OpenCV checks whether the
+detected laser dot is inside the label you typed.
 
 ```bash
 python3 examples/vision/grid_laser_calibration.py capture-laser-samples \
   --interactive \
   --count 50 \
-  --grid-rows 12 \
-  --grid-cols 7 \
-  --square-size-cm 15
+  --roi 700,420,320,390 \
+  --min-line-length 25
 ```
 
 Example prompt answer:
 
 ```text
 3,5
+T1,1
 ```
 
 Saved to:
@@ -106,6 +109,14 @@ camera_calibration_runs/latest/laser_images/
 camera_calibration_runs/latest/laser_samples.jsonl
 ```
 
+Good sample output includes:
+
+```text
+laser_detected=true grid_found=true box_check=inside
+```
+
+If `box_check=outside`, that sample is rejected during final calibration.
+
 ### 5. Calibrate With Laser Samples
 
 ```bash
@@ -113,9 +124,8 @@ python3 examples/vision/grid_laser_calibration.py calibrate-laser \
   --samples camera_calibration_runs/latest/laser_samples.jsonl \
   --output camera_calibration_runs/latest/calibration.json \
   --min-accepted 10 \
-  --grid-rows 12 \
-  --grid-cols 7 \
-  --square-size-cm 15
+  --roi 700,420,320,390 \
+  --min-line-length 25
 ```
 
 Good output includes:

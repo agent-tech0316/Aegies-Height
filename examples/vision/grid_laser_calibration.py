@@ -23,6 +23,10 @@ class GridSpec:
     rows: int
     cols: int
     square_size_cm: float
+    shape: str = "l_shape"
+    top_extension_rows: int = 4
+    top_extension_cols: int = 2
+    top_extension_start_col: int = 6
 
     @property
     def box_rows(self) -> int:
@@ -31,6 +35,26 @@ class GridSpec:
     @property
     def box_cols(self) -> int:
         return self.cols - 1
+
+    @property
+    def top_extension_end_col(self) -> int:
+        return self.top_extension_start_col + self.top_extension_cols - 1
+
+    @property
+    def point_count(self) -> int:
+        if self.shape == "rectangle":
+            return self.rows * self.cols
+        if self.shape == "l_shape":
+            return self.rows * self.cols + self.top_extension_rows * (self.top_extension_cols + 1)
+        raise ValueError(f"unsupported grid shape: {self.shape}")
+
+    def as_dict(self) -> dict[str, object]:
+        data = asdict(self)
+        if self.shape == "rectangle":
+            data.pop("top_extension_rows")
+            data.pop("top_extension_cols")
+            data.pop("top_extension_start_col")
+        return data
 
 
 @dataclass(frozen=True)
@@ -130,6 +154,36 @@ def choose_evenly_spaced_lines(lines: list[float], expected_count: int) -> list[
     return list(best_subset or lines[:expected_count])
 
 
+def split_l_shape_y_lines(y_lines: list[float], spec: GridSpec) -> tuple[list[float], list[float]] | None:
+    """Return top-extension y lines and lower-rectangle y lines for the L target."""
+    y_lines = sorted(y_lines)
+    needed = spec.rows + spec.top_extension_rows
+    if len(y_lines) < needed:
+        return None
+
+    best_top: list[float] | None = None
+    best_lower: list[float] | None = None
+    best_score: float | None = None
+    for subset in itertools.combinations(y_lines, needed):
+        gaps = [subset[index + 1] - subset[index] for index in range(len(subset) - 1)]
+        if not gaps or min(gaps) <= 0:
+            continue
+        mean_gap = sum(gaps) / len(gaps)
+        spacing_error = sum((gap - mean_gap) ** 2 for gap in gaps) / len(gaps)
+        # The lower rectangle starts immediately after the top extension.
+        top = list(subset[: spec.top_extension_rows])
+        lower = list(subset[spec.top_extension_rows :])
+        score = spacing_error - (subset[-1] - subset[0]) * 0.01
+        if best_score is None or score < best_score:
+            best_score = score
+            best_top = top
+            best_lower = lower
+
+    if best_top is None or best_lower is None:
+        return None
+    return best_top, best_lower
+
+
 def detect_grid_points(
     image,
     spec: GridSpec,
@@ -137,9 +191,24 @@ def detect_grid_points(
     blue_hue_low: int,
     blue_hue_high: int,
     min_line_length: int,
+    roi: tuple[int, int, int, int] | None = None,
 ):
     cv2, np = require_cv2_numpy()
-    hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+    working = image
+    offset_x = 0
+    offset_y = 0
+    if roi is not None:
+        x, y, width, height = roi
+        image_height, image_width = image.shape[:2]
+        x2 = min(image_width, x + width)
+        y2 = min(image_height, y + height)
+        if x < 0 or y < 0 or x >= image_width or y >= image_height or x2 <= x or y2 <= y:
+            return False, None, {"reason": "roi_out_of_image", "roi": roi}
+        working = image[y:y2, x:x2]
+        offset_x = x
+        offset_y = y
+
+    hsv = cv2.cvtColor(working, cv2.COLOR_BGR2HSV)
     lower = np.array([blue_hue_low, 50, 35], dtype=np.uint8)
     upper = np.array([blue_hue_high, 255, 255], dtype=np.uint8)
     mask = cv2.inRange(hsv, lower, upper)
@@ -176,7 +245,8 @@ def detect_grid_points(
     raw_vertical_count = len(x_lines)
     raw_horizontal_count = len(y_lines)
 
-    if len(x_lines) < spec.cols or len(y_lines) < spec.rows:
+    needed_y_lines = spec.rows if spec.shape == "rectangle" else spec.rows
+    if len(x_lines) < spec.cols or len(y_lines) < needed_y_lines:
         return (
             False,
             None,
@@ -185,20 +255,54 @@ def detect_grid_points(
                 "vertical_lines": raw_vertical_count,
                 "horizontal_lines": raw_horizontal_count,
                 "needed_vertical_lines": spec.cols,
-                "needed_horizontal_lines": spec.rows,
+                "needed_horizontal_lines": needed_y_lines,
             },
         )
 
     x_lines = choose_evenly_spaced_lines(x_lines, spec.cols)
-    y_lines = choose_evenly_spaced_lines(y_lines, spec.rows)
-    points = np.array([[x, y] for y in y_lines for x in x_lines], dtype=np.float32)
+    if spec.shape == "rectangle":
+        y_lines = choose_evenly_spaced_lines(y_lines, spec.rows)
+        points = np.array([[x + offset_x, y + offset_y] for y in y_lines for x in x_lines], dtype=np.float32)
+        selected_y_debug = y_lines
+        top_y_debug: list[float] = []
+    elif spec.shape == "l_shape":
+        split = split_l_shape_y_lines(y_lines, spec)
+        inferred_top = False
+        if split is None:
+            lower_y_lines = choose_evenly_spaced_lines(y_lines, spec.rows)
+            lower_gaps = [
+                lower_y_lines[index + 1] - lower_y_lines[index]
+                for index in range(len(lower_y_lines) - 1)
+            ]
+            mean_lower_gap = sum(lower_gaps) / len(lower_gaps)
+            top_y_lines = [
+                lower_y_lines[0] - mean_lower_gap * offset
+                for offset in range(spec.top_extension_rows, 0, -1)
+            ]
+            inferred_top = True
+        else:
+            top_y_lines, lower_y_lines = split
+        extension_x_lines = x_lines[
+            spec.top_extension_start_col - 1 : spec.top_extension_start_col + spec.top_extension_cols
+        ]
+        lower_points = [[x + offset_x, y + offset_y] for y in lower_y_lines for x in x_lines]
+        top_points = [[x + offset_x, y + offset_y] for y in top_y_lines for x in extension_x_lines]
+        points = np.array(lower_points + top_points, dtype=np.float32)
+        selected_y_debug = lower_y_lines
+        top_y_debug = top_y_lines
+    else:
+        raise ValueError(f"unsupported grid shape: {spec.shape}")
     return True, points.reshape(-1, 1, 2), {
+        "shape": spec.shape,
         "vertical_lines": len(x_lines),
-        "horizontal_lines": len(y_lines),
+        "horizontal_lines": len(selected_y_debug) + len(top_y_debug),
         "raw_vertical_lines": raw_vertical_count,
         "raw_horizontal_lines": raw_horizontal_count,
-        "selected_x_lines": [round(value, 2) for value in x_lines],
-        "selected_y_lines": [round(value, 2) for value in y_lines],
+        "roi": roi,
+        "top_extension_y_inferred": spec.shape == "l_shape" and inferred_top,
+        "selected_x_lines": [round(value + offset_x, 2) for value in x_lines],
+        "selected_lower_y_lines": [round(value + offset_y, 2) for value in selected_y_debug],
+        "selected_top_extension_y_lines": [round(value + offset_y, 2) for value in top_y_debug],
     }
 
 
@@ -208,18 +312,128 @@ def object_points(spec: GridSpec):
     for row in range(spec.rows):
         for col in range(spec.cols):
             points.append([col * spec.square_size_cm, row * spec.square_size_cm, 0.0])
+    if spec.shape == "l_shape":
+        for top_row in range(spec.top_extension_rows, 0, -1):
+            y_cm = -top_row * spec.square_size_cm
+            for offset_col in range(spec.top_extension_cols + 1):
+                col = spec.top_extension_start_col - 1 + offset_col
+                points.append([col * spec.square_size_cm, y_cm, 0.0])
     return np.asarray(points, dtype=np.float32)
 
 
-def grid_box_center_object_point(*, spec: GridSpec, row: int, col: int):
+def grid_box_center_object_point(*, spec: GridSpec, row: int, col: int, region: str = "lower"):
     _, np = require_cv2_numpy()
-    if row < 1 or row > spec.box_rows:
-        raise ValueError(f"box row must be 1..{spec.box_rows}, got {row}")
-    if col < 1 or col > spec.box_cols:
-        raise ValueError(f"box col must be 1..{spec.box_cols}, got {col}")
-    x_cm = (col - 0.5) * spec.square_size_cm
-    y_cm = (row - 0.5) * spec.square_size_cm
+    if region == "lower":
+        if row < 1 or row > spec.box_rows:
+            raise ValueError(f"lower box row must be 1..{spec.box_rows}, got {row}")
+        if col < 1 or col > spec.box_cols:
+            raise ValueError(f"lower box col must be 1..{spec.box_cols}, got {col}")
+        x_cm = (col - 0.5) * spec.square_size_cm
+        y_cm = (row - 0.5) * spec.square_size_cm
+    elif region == "top_extension":
+        if spec.shape != "l_shape":
+            raise ValueError("top-extension labels require --grid-shape l_shape")
+        if row < 1 or row > spec.top_extension_rows:
+            raise ValueError(f"top-extension row must be 1..{spec.top_extension_rows}, got {row}")
+        if col < 1 or col > spec.top_extension_cols:
+            raise ValueError(f"top-extension col must be 1..{spec.top_extension_cols}, got {col}")
+        lower_col = spec.top_extension_start_col + col - 1
+        x_cm = (lower_col - 0.5) * spec.square_size_cm
+        y_cm = -(spec.top_extension_rows - row + 0.5) * spec.square_size_cm
+    else:
+        raise ValueError(f"unsupported box region: {region}")
     return np.asarray([[x_cm, y_cm, 0.0]], dtype=np.float32)
+
+
+def parse_box_label(raw: str) -> tuple[str, int, int]:
+    raw = raw.strip().lower()
+    if raw.startswith("t"):
+        parts = raw[1:].split(",", 1)
+        if len(parts) != 2:
+            raise ValueError("top-extension label must look like T1,1")
+        return "top_extension", int(parts[0].strip()), int(parts[1].strip())
+    parts = raw.split(",", 1)
+    if len(parts) != 2:
+        raise ValueError("lower-grid label must look like 1,1")
+    return "lower", int(parts[0].strip()), int(parts[1].strip())
+
+
+def format_box_label(region: str, row: int, col: int) -> str:
+    if region == "top_extension":
+        return f"T{row},{col}"
+    return f"{row},{col}"
+
+
+def parse_roi(raw: str | None) -> tuple[int, int, int, int] | None:
+    if not raw:
+        return None
+    parts = [int(part.strip()) for part in raw.split(",")]
+    if len(parts) != 4:
+        raise ValueError("--roi must be x,y,width,height")
+    x, y, width, height = parts
+    if width <= 0 or height <= 0:
+        raise ValueError("--roi width and height must be positive")
+    return x, y, width, height
+
+
+def dot_inside_labeled_box(
+    *,
+    spec: GridSpec,
+    grid_debug: dict[str, object],
+    dot: LaserDot,
+    region: str,
+    row: int,
+    col: int,
+    margin_px: float = 2.0,
+) -> dict[str, object]:
+    x_lines = [float(value) for value in grid_debug.get("selected_x_lines", [])]
+    lower_y_lines = [float(value) for value in grid_debug.get("selected_lower_y_lines", [])]
+    top_y_lines = [float(value) for value in grid_debug.get("selected_top_extension_y_lines", [])]
+
+    if region == "lower":
+        grid_box_center_object_point(spec=spec, row=row, col=col, region=region)
+        if len(x_lines) < col + 1 or len(lower_y_lines) < row + 1:
+            return {"box_check": "unknown", "reason": "missing_lower_grid_lines"}
+        left, right = x_lines[col - 1], x_lines[col]
+        top, bottom = lower_y_lines[row - 1], lower_y_lines[row]
+    elif region == "top_extension":
+        grid_box_center_object_point(spec=spec, row=row, col=col, region=region)
+        start_index = spec.top_extension_start_col - 1
+        left_index = start_index + col - 1
+        right_index = left_index + 1
+        if len(x_lines) <= right_index or len(top_y_lines) < row + 1:
+            return {"box_check": "unknown", "reason": "missing_top_extension_grid_lines"}
+        left, right = x_lines[left_index], x_lines[right_index]
+        top, bottom = top_y_lines[row - 1], top_y_lines[row]
+    else:
+        return {"box_check": "unknown", "reason": f"unsupported_region:{region}"}
+
+    inside = (
+        min(left, right) - margin_px <= dot.x <= max(left, right) + margin_px
+        and min(top, bottom) - margin_px <= dot.y <= max(top, bottom) + margin_px
+    )
+    return {
+        "box_check": "inside" if inside else "outside",
+        "expected_box_bounds_px": {
+            "left": round(left, 2),
+            "right": round(right, 2),
+            "top": round(top, 2),
+            "bottom": round(bottom, 2),
+        },
+        "laser_dot_px": {"x": round(dot.x, 2), "y": round(dot.y, 2)},
+    }
+
+
+def make_grid_spec(args: argparse.Namespace) -> GridSpec:
+    return GridSpec(
+        rows=args.grid_rows,
+        cols=args.grid_cols,
+        square_size_cm=args.square_size_cm,
+        shape=args.grid_shape,
+        top_extension_rows=args.top_extension_rows,
+        top_extension_cols=args.top_extension_cols,
+        top_extension_start_col=args.top_extension_start_col,
+    )
 
 
 def detect_laser_dot(
@@ -271,10 +485,11 @@ def inspect_grid(args: argparse.Namespace) -> None:
         raise RuntimeError(f"OpenCV could not read image: {args.image}")
     found, points, debug = detect_grid_points(
         image,
-        GridSpec(args.grid_rows, args.grid_cols, args.square_size_cm),
+        make_grid_spec(args),
         blue_hue_low=args.blue_hue_low,
         blue_hue_high=args.blue_hue_high,
         min_line_length=args.min_line_length,
+        roi=parse_roi(args.roi),
     )
     print(f"grid_found={str(found).lower()}")
     print(f"point_count={0 if points is None else len(points)}")
@@ -283,7 +498,7 @@ def inspect_grid(args: argparse.Namespace) -> None:
 
 def capture_grid(args: argparse.Namespace) -> None:
     cv2, _ = require_cv2_numpy()
-    spec = GridSpec(args.grid_rows, args.grid_cols, args.square_size_cm)
+    spec = make_grid_spec(args)
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     cap = open_camera(args.rtsp_url)
@@ -315,6 +530,7 @@ def capture_grid(args: argparse.Namespace) -> None:
                 blue_hue_low=args.blue_hue_low,
                 blue_hue_high=args.blue_hue_high,
                 min_line_length=args.min_line_length,
+                roi=parse_roi(args.roi),
             )
             if found:
                 accepted += 1
@@ -338,7 +554,7 @@ def capture_grid(args: argparse.Namespace) -> None:
             "finished_at": datetime.now().isoformat(timespec="seconds"),
             "saved_count": saved,
             "accepted_count": accepted,
-            "grid": asdict(spec),
+            "grid": spec.as_dict(),
             "records": records,
         },
     )
@@ -347,26 +563,34 @@ def capture_grid(args: argparse.Namespace) -> None:
 
 def capture_laser_samples(args: argparse.Namespace) -> None:
     cv2, _ = require_cv2_numpy()
-    spec = GridSpec(args.grid_rows, args.grid_cols, args.square_size_cm)
+    spec = make_grid_spec(args)
     output_dir = Path(args.output_dir)
     samples_path = Path(args.samples)
     output_dir.mkdir(parents=True, exist_ok=True)
     print(f"laser_samples={samples_path}")
-    print(f"grid_boxes={spec.box_rows}x{spec.box_cols}")
-    print("box_labels_are=1_based_from_top_left")
+    print(f"grid_shape={spec.shape}")
+    print(f"lower_grid_boxes={spec.box_rows}x{spec.box_cols}")
+    if spec.shape == "l_shape":
+        print(
+            "top_extension_boxes="
+            f"{spec.top_extension_rows}x{spec.top_extension_cols} "
+            f"above_lower_columns={spec.top_extension_start_col}..{spec.top_extension_end_col}"
+        )
+    print("lower_box_labels_are=1_based_from_top_left_like_1,1")
+    print("top_extension_labels_are=Trow,col_like_T1,1")
 
     for index in range(1, args.count + 1):
         if args.interactive:
             raw = input(f"sample {index}/{args.count} box row,col (or q)> ").strip().lower()
             if raw in {"q", "quit", "exit"}:
                 break
-            row, col = [int(part.strip()) for part in raw.split(",", 1)]
+            region, row, col = parse_box_label(raw)
         else:
             if args.box_row is None or args.box_col is None:
                 raise RuntimeError("Use --interactive or provide --box-row and --box-col.")
-            row, col = args.box_row, args.box_col
+            region, row, col = args.box_region, args.box_row, args.box_col
 
-        grid_box_center_object_point(spec=spec, row=row, col=col)
+        grid_box_center_object_point(spec=spec, row=row, col=col, region=region)
         image_path = output_dir / f"laser_{int(time.time())}_{index:04d}.jpg"
         capture_one_frame(rtsp_url=args.rtsp_url, output=image_path, jpeg_quality=args.jpeg_quality)
         image = cv2.imread(str(image_path))
@@ -384,14 +608,29 @@ def capture_laser_samples(args: argparse.Namespace) -> None:
             blue_hue_low=args.blue_hue_low,
             blue_hue_high=args.blue_hue_high,
             min_line_length=args.min_line_length,
+            roi=parse_roi(args.roi),
         )
+        box_check = {"box_check": "unknown", "reason": "laser_or_grid_missing"}
+        sample_accepted = False
+        if dot is not None and grid_found:
+            box_check = dot_inside_labeled_box(
+                spec=spec,
+                grid_debug=grid_debug,
+                dot=dot,
+                region=region,
+                row=row,
+                col=col,
+            )
+            sample_accepted = box_check.get("box_check") == "inside"
         sample = {
             "created_at": datetime.now().isoformat(timespec="seconds"),
             "image": str(image_path),
+            "box_region": region,
             "box_row": row,
             "box_col": col,
+            "box_label": format_box_label(region, row, col),
             "box_origin": "top_left",
-            "grid": asdict(spec),
+            "grid": spec.as_dict(),
             "laser_color": args.laser_color,
             "laser_detected": dot is not None,
             "laser_dot": None if dot is None else asdict(dot),
@@ -399,18 +638,21 @@ def capture_laser_samples(args: argparse.Namespace) -> None:
             "grid_point_count": 0 if grid_points is None else int(len(grid_points)),
             "laser_debug": laser_debug,
             "grid_debug": grid_debug,
+            "box_check": box_check,
+            "sample_accepted": sample_accepted,
             "label": args.label,
         }
         append_jsonl(samples_path, sample)
         print(
-            f"sample_saved={image_path} box={row},{col} "
-            f"laser_detected={str(dot is not None).lower()} grid_found={str(grid_found).lower()}"
+            f"sample_saved={image_path} box={format_box_label(region, row, col)} "
+            f"laser_detected={str(dot is not None).lower()} grid_found={str(grid_found).lower()} "
+            f"box_check={box_check.get('box_check')}"
         )
 
 
 def calibrate_from_images(args: argparse.Namespace) -> None:
     cv2, np = require_cv2_numpy()
-    spec = GridSpec(args.grid_rows, args.grid_cols, args.square_size_cm)
+    spec = make_grid_spec(args)
     image_dir = Path(args.image_dir)
     images = sorted(image_dir.glob("*.jpg")) + sorted(image_dir.glob("*.png"))
     if not images:
@@ -436,6 +678,7 @@ def calibrate_from_images(args: argparse.Namespace) -> None:
             blue_hue_low=args.blue_hue_low,
             blue_hue_high=args.blue_hue_high,
             min_line_length=args.min_line_length,
+            roi=parse_roi(args.roi),
         )
         if not found or points is None:
             rejected.append({"image": str(image_path), **debug})
@@ -465,7 +708,7 @@ def calibrate_from_images(args: argparse.Namespace) -> None:
         "image_dir": str(image_dir),
         "image_width": image_size[0],
         "image_height": image_size[1],
-        "grid": asdict(spec),
+        "grid": spec.as_dict(),
         "attempt_count": len(images),
         "accepted_count": len(accepted),
         "rejected_count": len(rejected),
@@ -483,7 +726,7 @@ def calibrate_from_images(args: argparse.Namespace) -> None:
 
 def calibrate_from_laser_samples(args: argparse.Namespace) -> None:
     cv2, np = require_cv2_numpy()
-    spec = GridSpec(args.grid_rows, args.grid_cols, args.square_size_cm)
+    spec = make_grid_spec(args)
     samples = load_jsonl(Path(args.samples))
     if not samples:
         raise RuntimeError(f"No laser samples found: {args.samples}")
@@ -509,6 +752,7 @@ def calibrate_from_laser_samples(args: argparse.Namespace) -> None:
             blue_hue_low=args.blue_hue_low,
             blue_hue_high=args.blue_hue_high,
             min_line_length=args.min_line_length,
+            roi=parse_roi(args.roi),
         )
         if not found or grid_points is None:
             rejected.append({"image": str(image_path), **grid_debug})
@@ -518,15 +762,48 @@ def calibrate_from_laser_samples(args: argparse.Namespace) -> None:
             rejected.append({"image": str(image_path), "reason": "laser_dot_missing"})
             continue
 
+        region = str(sample.get("box_region", "lower"))
         row = int(sample["box_row"])
         col = int(sample["box_col"])
-        laser_object = grid_box_center_object_point(spec=spec, row=row, col=col)
+        dot = LaserDot(
+            x=float(laser_dot["x"]),
+            y=float(laser_dot["y"]),
+            radius=float(laser_dot.get("radius", 0.0)),
+            area=float(laser_dot.get("area", 0.0)),
+        )
+        box_check = dot_inside_labeled_box(
+            spec=spec,
+            grid_debug=grid_debug,
+            dot=dot,
+            region=region,
+            row=row,
+            col=col,
+        )
+        if box_check.get("box_check") != "inside":
+            rejected.append(
+                {
+                    "image": str(image_path),
+                    "reason": "laser_dot_outside_labeled_box",
+                    "box_label": format_box_label(region, row, col),
+                    "box_check": box_check,
+                }
+            )
+            continue
+        laser_object = grid_box_center_object_point(spec=spec, row=row, col=col, region=region)
         laser_image = np.asarray([[[float(laser_dot["x"]), float(laser_dot["y"])]]], dtype=np.float32)
         object_set = np.vstack([base_object_points, laser_object.reshape(-1, 3)])
         image_set = np.vstack([grid_points.reshape(-1, 2), laser_image.reshape(-1, 2)]).reshape(-1, 1, 2)
         object_sets.append(object_set.astype(np.float32))
         image_sets.append(image_set.astype(np.float32))
-        accepted.append({"image": str(image_path), "box_row": row, "box_col": col})
+        accepted.append(
+            {
+                "image": str(image_path),
+                "box_region": region,
+                "box_row": row,
+                "box_col": col,
+                "box_label": format_box_label(region, row, col),
+            }
+        )
 
     if image_size is None:
         raise RuntimeError("OpenCV could not read any laser sample image.")
@@ -546,7 +823,7 @@ def calibrate_from_laser_samples(args: argparse.Namespace) -> None:
         raise RuntimeError("Calibration produced non-finite values; improve laser/grid samples.")
 
     laser_errors: list[float] = []
-    grid_count = spec.rows * spec.cols
+    grid_count = spec.point_count
     for object_set, image_set, rvec, tvec in zip(object_sets, image_sets, rvecs, tvecs):
         projected, _ = cv2.projectPoints(object_set, rvec, tvec, camera_matrix, distortion)
         actual = image_set.reshape(-1, 2)
@@ -559,7 +836,7 @@ def calibrate_from_laser_samples(args: argparse.Namespace) -> None:
         "samples": args.samples,
         "image_width": image_size[0],
         "image_height": image_size[1],
-        "grid": asdict(spec),
+        "grid": spec.as_dict(),
         "attempt_count": len(samples),
         "accepted_count": len(accepted),
         "rejected_count": len(rejected),
@@ -583,9 +860,18 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
 
     def add_grid_args(p: argparse.ArgumentParser) -> None:
-        p.add_argument("--grid-rows", type=int, default=12)
-        p.add_argument("--grid-cols", type=int, default=7)
+        p.add_argument("--grid-shape", choices=["rectangle", "l_shape"], default="l_shape")
+        p.add_argument("--grid-rows", type=int, default=8)
+        p.add_argument("--grid-cols", type=int, default=8)
         p.add_argument("--square-size-cm", type=float, default=15.0)
+        p.add_argument("--top-extension-rows", type=int, default=4)
+        p.add_argument("--top-extension-cols", type=int, default=2)
+        p.add_argument("--top-extension-start-col", type=int, default=6)
+        p.add_argument(
+            "--roi",
+            default=None,
+            help="Optional grid search crop as x,y,width,height. Use this when other blue lines are visible.",
+        )
         p.add_argument("--blue-hue-low", type=int, default=85)
         p.add_argument("--blue-hue-high", type=int, default=135)
         p.add_argument("--min-line-length", type=int, default=80)
@@ -616,6 +902,7 @@ def build_parser() -> argparse.ArgumentParser:
     laser.add_argument("--samples", default="camera_calibration_runs/latest/laser_samples.jsonl")
     laser.add_argument("--count", type=int, default=50)
     laser.add_argument("--interactive", action="store_true")
+    laser.add_argument("--box-region", choices=["lower", "top_extension"], default="lower")
     laser.add_argument("--box-row", type=int, default=None)
     laser.add_argument("--box-col", type=int, default=None)
     laser.add_argument("--label", default="")

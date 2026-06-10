@@ -73,38 +73,58 @@ ssh firefly@<robot-ip>
 If SSH is not available, run the same commands directly on the dog with
 monitor/keyboard.
 
-## 2. Get The Repo Onto The Dog
+## 2. Clean The Dog And Copy Fresh Files
 
-If the repo is already on the dog:
+Run these commands from your Mac terminal, not inside the SSH session:
 
 ```bash
-cd /path/to/Aegies-Height
+ssh firefly@192.168.234.1 'rm -rf ~/Aegies-Height && mkdir -p ~/Aegies-Height'
+
+cd "/Users/agentech/Documents/Faraday Future Robot SDK"
+
+rsync -av --delete \
+  --exclude '.git/' \
+  --exclude 'camera_calibration_runs/' \
+  ./ firefly@192.168.234.1:~/Aegies-Height/
 ```
 
-If the dog has GitHub access:
+This leaves the dog clean. It copies the code, `test_camera.jpg`, and the
+annotated reference image at:
+
+```text
+~/Aegies-Height/docs/images/l_shape_grid_box_labels.jpg
+```
+
+Then SSH in:
+
+```bash
+ssh firefly@192.168.234.1
+cd ~/Aegies-Height
+```
+
+Check that the only calibration starting image/reference files are present:
+
+```bash
+ls test_camera.jpg docs/images/l_shape_grid_box_labels.jpg
+ls camera_calibration_runs
+```
+
+The last command should say `No such file or directory` before you start a new
+calibration. That is good: it means no old calibration run is left.
+
+If the dog has GitHub access later, this also works:
 
 ```bash
 git clone git@github.com:wesleyfan2015/Aegies-Height.git
 cd Aegies-Height
 ```
 
-If the dog does not have GitHub access, copy the folder from your laptop:
+If Ethernet gives the dog a different IP, replace `192.168.234.1` with that IP.
+
+To delete only old calibration images later, run this on the dog:
 
 ```bash
-scp -r "/Users/agentech/Documents/Faraday Future Robot SDK" firefly@192.168.234.1:~/Aegies-Height
-```
-
-If Ethernet gives the dog a different IP:
-
-```bash
-scp -r "/Users/agentech/Documents/Faraday Future Robot SDK" firefly@<robot-ip>:~/Aegies-Height
-```
-
-Then SSH in and enter the folder:
-
-```bash
-ssh firefly@192.168.234.1
-cd ~/Aegies-Height
+rm -rf ~/Aegies-Height/camera_calibration_runs
 ```
 
 ## 3. Install Dependencies
@@ -189,12 +209,17 @@ square_size_cm  = real measured square size
 Current default:
 
 ```text
-grid_rows = 12
-grid_cols = 7
+grid_shape = l_shape
+lower grid intersections = 8 rows x 8 cols
+lower grid boxes = 7 rows x 7 cols
+top extension boxes = 4 rows x 2 cols
 square_size_cm = 15
+roi = 700,420,320,390 for test_camera.jpg
 ```
 
-If your physical grid is different, change the command values.
+Use `docs/images/l_shape_grid_box_labels.jpg` as the reference image. Lower
+boxes are labeled `1,1` through `7,7`. Top-extension boxes are labeled `T1,1`
+through `T4,2`.
 
 ### 5.2 Inspect The Existing Test Image
 
@@ -203,22 +228,21 @@ Run:
 ```bash
 python3 examples/vision/grid_laser_calibration.py inspect-grid \
   --image test_camera.jpg \
-  --grid-rows 12 \
-  --grid-cols 7 \
-  --square-size-cm 15
+  --roi 700,420,320,390 \
+  --min-line-length 25
 ```
 
 Good result:
 
 ```text
 grid_found=true
-point_count=84
+point_count=76
 ```
 
-Why `84`:
+Why `76`:
 
 ```text
-12 rows * 7 cols = 84 intersections
+64 lower-grid intersections + 12 top-extension intersections = 76
 ```
 
 If `grid_found=false`, check:
@@ -237,9 +261,8 @@ Run this while the dog camera sees the wall grid:
 python3 examples/vision/grid_laser_calibration.py capture-grid \
   --count 200 \
   --interval-sec 0.1 \
-  --grid-rows 12 \
-  --grid-cols 7 \
-  --square-size-cm 15
+  --roi 700,420,320,390 \
+  --min-line-length 25
 ```
 
 Move the dog/camera or grid view enough that the grid appears in different parts
@@ -272,9 +295,8 @@ python3 examples/vision/grid_laser_calibration.py calibrate \
   --image-dir camera_calibration_runs/latest/images \
   --output camera_calibration_runs/latest/calibration.json \
   --min-accepted 30 \
-  --grid-rows 12 \
-  --grid-cols 7 \
-  --square-size-cm 15
+  --roi 700,420,320,390 \
+  --min-line-length 25
 ```
 
 Good result:
@@ -292,18 +314,27 @@ Lower RMS is better. If RMS is high, capture better grid images.
 This is the assisted calibration step.
 
 Point the laser into a grid box, then tell the script which box it is in.
+OpenCV detects the laser dot and checks whether it is inside the box label you
+typed.
 
-Boxes are counted from the top-left starting at:
+Lower boxes are counted from the top-left starting at:
 
 ```text
 row 1, col 1
 ```
 
-With 12 horizontal lines and 7 vertical lines, the grid has:
+The lower rectangle has:
 
 ```text
-11 box rows
-6 box columns
+7 box rows
+7 box columns
+```
+
+The top extension uses labels `Trow,col`:
+
+```text
+T1,1 is the upper-left top-extension box
+T4,2 is the lower-right top-extension box
 ```
 
 Run:
@@ -312,9 +343,8 @@ Run:
 python3 examples/vision/grid_laser_calibration.py capture-laser-samples \
   --interactive \
   --count 50 \
-  --grid-rows 12 \
-  --grid-cols 7 \
-  --square-size-cm 15
+  --roi 700,420,320,390 \
+  --min-line-length 25
 ```
 
 When prompted:
@@ -327,6 +357,7 @@ Type values like:
 
 ```text
 3,5
+T1,1
 ```
 
 Saved laser images:
@@ -346,7 +377,12 @@ Good result for each sample:
 ```text
 laser_detected=true
 grid_found=true
+box_check=inside
 ```
+
+If `box_check=outside`, the laser dot is not inside the box you typed. Move the
+laser or type the correct label on the next sample. The final calibration
+rejects outside samples.
 
 If the laser is not detected:
 
@@ -365,9 +401,8 @@ python3 examples/vision/grid_laser_calibration.py calibrate-laser \
   --samples camera_calibration_runs/latest/laser_samples.jsonl \
   --output camera_calibration_runs/latest/calibration.json \
   --min-accepted 10 \
-  --grid-rows 12 \
-  --grid-cols 7 \
-  --square-size-cm 15
+  --roi 700,420,320,390 \
+  --min-line-length 25
 ```
 
 Good result:
