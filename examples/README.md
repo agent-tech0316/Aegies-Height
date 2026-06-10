@@ -36,7 +36,9 @@
 
 | 示例 | 主题 |
 |---|---|
-| [vision/height_calculator.py](vision/height_calculator.py) | 机器人相机网格标定 + YOLO/OpenCV 身高估计 |
+| [vision/grid_laser_calibration.py](vision/grid_laser_calibration.py) | 墙面网格 + 激光点相机标定 |
+| [vision/height_calculator.py](vision/height_calculator.py) | YOLO/OpenCV 身高估计辅助 |
+| [vision/tilt_telemetry_probe.py](vision/tilt_telemetry_probe.py) | 机器人倾斜控制/遥测探测 |
 
 ## Cookbook（场景菜谱）
 

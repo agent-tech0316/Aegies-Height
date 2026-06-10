@@ -1,44 +1,27 @@
-# Aegis/D1 Dog Testing Runbook
+# Aegis/D1 Dog Testing And Calibration Runbook
 
-This document is the practical checklist for testing the dog before the final
-camera-only height measurement workflow is finished.
+This is the command guide for the height-measurement project.
 
-The goal today is to answer these questions:
+There are two separate work paths:
 
-- Can we connect to the dog over Ethernet or local terminal?
-- Can the dog camera stream be opened?
-- Can YOLO detect a full person?
-- Does the Python backend expose `rpy()` pitch telemetry?
-- Does the Python backend expose `attitude()` pitch/tilt control?
-- Does a small pitch command change the reported pitch?
+1. **Calibration path, today**: use the wall grid and laser samples to calibrate the dog camera for accuracy.
+2. **Tilt path, later**: use dog tilt telemetry and camera geometry for a Measure-app style workflow.
 
-If the answer is yes, we can build the Measure-app style workflow where the dog
-tilts itself and OpenCV/YOLO calculates height from camera geometry.
+Today, do the **calibration path** first.
 
-## 0. Files You Will Use
+## 0. Project Files
 
-Main probe script:
+Use these files:
 
-```bash
-examples/vision/tilt_telemetry_probe.py
-```
-
-Vision helper script:
-
-```bash
-examples/vision/height_calculator.py
-```
-
-Vision/runtime dependencies:
-
-```bash
-requirements-vision.txt
-```
-
-YOLO model:
-
-```bash
-models/yolov8n.onnx
+```text
+docs/dog_testing_runbook.md              # this guide
+docs/camera_height_workflow.md           # height workflow overview
+examples/vision/grid_laser_calibration.py # grid + laser calibration commands
+examples/vision/height_calculator.py     # YOLO/distance/height helper commands
+examples/vision/tilt_telemetry_probe.py  # tilt telemetry test, for later
+models/yolov8n.onnx                      # YOLO model
+requirements-vision.txt                  # Python vision dependencies
+test_camera.jpg                          # sample grid image
 ```
 
 ## 1. Connect To The Dog
@@ -51,7 +34,7 @@ If the dog does not have WiFi, use Ethernet:
 2. Find the dog IP address.
 3. SSH into the dog.
 
-If you have access to the dog directly with monitor/keyboard, run this on the dog:
+If you have monitor/keyboard access to the dog, run this on the dog:
 
 ```bash
 ip addr
@@ -77,18 +60,18 @@ Example:
 ssh pi@192.168.1.42
 ```
 
-If SSH is not available, use a monitor/keyboard on the dog and run the same
-commands locally.
+If SSH is not available, run the same commands directly on the dog with
+monitor/keyboard.
 
-## 2. Get The Project Onto The Dog
+## 2. Get The Repo Onto The Dog
 
-If the repo is already on the dog, go to it:
+If the repo is already on the dog:
 
 ```bash
 cd /path/to/Aegies-Height
 ```
 
-If it is not on the dog and the dog has internet/GitHub access:
+If the dog has GitHub access:
 
 ```bash
 git clone git@github.com:wesleyfan2015/Aegies-Height.git
@@ -101,7 +84,7 @@ If the dog does not have GitHub access, copy the folder from your laptop:
 scp -r "/Users/agentech/Documents/Faraday Future Robot SDK" <user>@<robot-ip>:~/Aegies-Height
 ```
 
-Then SSH in and enter the copied folder:
+Then SSH in and enter the folder:
 
 ```bash
 ssh <user>@<robot-ip>
@@ -116,49 +99,323 @@ On the dog:
 python3 -m pip install -r requirements-vision.txt
 ```
 
-If you use the SDK wheel on the robot, install the correct wheel too:
+If you need the SDK wheel on the robot:
 
 ```bash
 python3 -m pip install wheels/ff_sdk-*-linux_aarch64.whl
 ```
 
-If you are testing from a Linux laptop connected to the dog:
+If testing from a Linux laptop connected to the dog:
 
 ```bash
 python3 -m pip install wheels/ff_sdk-*-linux_x86_64.whl
 ```
 
-## 4. Verify YOLO
+## 4. Quick Software Checks
 
-Run:
+Check YOLO:
 
 ```bash
 python3 examples/vision/height_calculator.py verify-yolo
 ```
 
-Expected result:
+Expected:
 
 ```text
 yolo_loaded=true
 ```
 
-If this fails, fix dependencies/model path before testing tilt.
-
-## 5. Run The Safe Probe First
-
-This connects to the dog, reads telemetry if available, captures a camera image,
-and runs YOLO. It does **not** send a tilt command.
-
-Default dog host:
+Check calibration script commands:
 
 ```bash
-python3 examples/vision/tilt_telemetry_probe.py \
-  --host 192.168.234.1 \
-  --stand \
-  --skip-tilt
+python3 examples/vision/grid_laser_calibration.py --help
 ```
 
-If the dog is on Ethernet with another IP:
+Expected commands:
+
+```text
+inspect-grid
+capture-grid
+capture-laser-samples
+calibrate
+calibrate-laser
+```
+
+## 5. Today: Wall Grid + Laser Calibration
+
+This is the path to do today.
+
+The grid and laser calibration does **not** train AI. It solves camera geometry:
+
+```text
+real grid position in centimeters <-> camera pixel position
+```
+
+The output is:
+
+```text
+camera_calibration_runs/latest/calibration.json
+```
+
+That file contains camera intrinsics and distortion coefficients. Later, the
+tilt/height math can use this to be more accurate.
+
+### 5.1 Confirm Grid Measurements
+
+Before running commands, confirm:
+
+```text
+grid_rows       = number of horizontal grid lines/intersections
+grid_cols       = number of vertical grid lines/intersections
+square_size_cm  = real measured square size
+```
+
+Current default:
+
+```text
+grid_rows = 12
+grid_cols = 7
+square_size_cm = 10
+```
+
+If your physical grid is different, change the command values.
+
+### 5.2 Inspect The Existing Test Image
+
+Run:
+
+```bash
+python3 examples/vision/grid_laser_calibration.py inspect-grid \
+  --image test_camera.jpg \
+  --grid-rows 12 \
+  --grid-cols 7 \
+  --square-size-cm 10
+```
+
+Good result:
+
+```text
+grid_found=true
+point_count=84
+```
+
+Why `84`:
+
+```text
+12 rows * 7 cols = 84 intersections
+```
+
+If `grid_found=false`, check:
+
+- the grid line color is visible
+- the image is not too dark
+- the grid row/column counts are correct
+- `--blue-hue-low` / `--blue-hue-high` may need adjustment
+- `--min-line-length` may need adjustment
+
+### 5.3 Capture Grid Images From The Dog Camera
+
+Run this while the dog camera sees the wall grid:
+
+```bash
+python3 examples/vision/grid_laser_calibration.py capture-grid \
+  --count 200 \
+  --interval-sec 0.1 \
+  --grid-rows 12 \
+  --grid-cols 7 \
+  --square-size-cm 10
+```
+
+Move the dog/camera or grid view enough that the grid appears in different parts
+of the image. Variety matters more than thousands of identical images.
+
+Saved images:
+
+```text
+camera_calibration_runs/latest/images/
+```
+
+Capture report:
+
+```text
+camera_calibration_runs/latest/images/capture_records.json
+```
+
+Good result:
+
+```text
+accepted_count should be at least 30
+```
+
+### 5.4 Calibrate From Grid Images
+
+Run:
+
+```bash
+python3 examples/vision/grid_laser_calibration.py calibrate \
+  --image-dir camera_calibration_runs/latest/images \
+  --output camera_calibration_runs/latest/calibration.json \
+  --min-accepted 30 \
+  --grid-rows 12 \
+  --grid-cols 7 \
+  --square-size-cm 10
+```
+
+Good result:
+
+```text
+calibration_saved=camera_calibration_runs/latest/calibration.json
+accepted_count >= 30
+rms_reprojection_error is low
+```
+
+Lower RMS is better. If RMS is high, capture better grid images.
+
+### 5.5 Capture Laser-Labeled Samples
+
+This is the assisted calibration step.
+
+Point the laser into a grid box, then tell the script which box it is in.
+
+Boxes are counted from the top-left starting at:
+
+```text
+row 1, col 1
+```
+
+With 12 horizontal lines and 7 vertical lines, the grid has:
+
+```text
+11 box rows
+6 box columns
+```
+
+Run:
+
+```bash
+python3 examples/vision/grid_laser_calibration.py capture-laser-samples \
+  --interactive \
+  --count 50 \
+  --grid-rows 12 \
+  --grid-cols 7 \
+  --square-size-cm 10
+```
+
+When prompted:
+
+```text
+sample 1/50 box row,col (or q)>
+```
+
+Type values like:
+
+```text
+3,5
+```
+
+Saved laser images:
+
+```text
+camera_calibration_runs/latest/laser_images/
+```
+
+Saved labels:
+
+```text
+camera_calibration_runs/latest/laser_samples.jsonl
+```
+
+Good result for each sample:
+
+```text
+laser_detected=true
+grid_found=true
+```
+
+If the laser is not detected:
+
+- try a darker room
+- use a brighter red/green laser
+- try `--laser-color green`
+- adjust `--laser-min-area`
+- adjust `--laser-max-area`
+
+### 5.6 Calibrate With Laser Samples
+
+Run:
+
+```bash
+python3 examples/vision/grid_laser_calibration.py calibrate-laser \
+  --samples camera_calibration_runs/latest/laser_samples.jsonl \
+  --output camera_calibration_runs/latest/calibration.json \
+  --min-accepted 10 \
+  --grid-rows 12 \
+  --grid-cols 7 \
+  --square-size-cm 10
+```
+
+Good result:
+
+```text
+calibration_saved=camera_calibration_runs/latest/calibration.json
+accepted_count >= 10
+rms_reprojection_error is low
+laser_error_px_avg is low
+```
+
+Keep the generated file:
+
+```text
+camera_calibration_runs/latest/calibration.json
+```
+
+## 6. How To Check If Calibration Is Correct
+
+Check the calibration JSON:
+
+```bash
+python3 -m json.tool camera_calibration_runs/latest/calibration.json | head -80
+```
+
+Look for:
+
+```text
+camera_matrix
+distortion_coefficients
+rms_reprojection_error
+accepted_count
+rejected_count
+```
+
+Good signs:
+
+- `accepted_count` is high
+- `rejected_count` is low
+- `rms_reprojection_error` is low
+- laser samples show low average pixel error
+- accepted images are from varied positions/angles
+
+Bad signs:
+
+- most images are rejected
+- the wrong grid row/column count was used
+- the grid was not flat
+- square size was measured wrong
+- the laser dot was labeled with the wrong box number
+- the laser reflected or bloomed too much
+
+## 7. Tilt Path For Later
+
+Do this later, after or separate from calibration.
+
+Tilt testing answers:
+
+- does Python expose `attitude()`?
+- does Python expose `rpy()`?
+- does pitch telemetry change after a small pitch command?
+- does the camera image change when the dog tilts?
+
+Safe no-tilt probe:
 
 ```bash
 python3 examples/vision/tilt_telemetry_probe.py \
@@ -167,38 +424,7 @@ python3 examples/vision/tilt_telemetry_probe.py \
   --skip-tilt
 ```
 
-Example:
-
-```bash
-python3 examples/vision/tilt_telemetry_probe.py \
-  --host 192.168.1.42 \
-  --stand \
-  --skip-tilt
-```
-
-Look for these fields in the output:
-
-```text
-connected: true
-available_methods
-initial_rpy
-before_image
-detections
-```
-
-The script saves images here:
-
-```bash
-tilt_probe_runs/latest/
-```
-
-## 6. Run A Tiny Tilt Probe
-
-Only run this after the safe probe connects successfully.
-
-Make sure the dog is in a clear area and someone is ready to stop it.
-
-Use a very small pitch velocity first:
+Tiny tilt probe:
 
 ```bash
 python3 examples/vision/tilt_telemetry_probe.py \
@@ -208,7 +434,7 @@ python3 examples/vision/tilt_telemetry_probe.py \
   --pitch-seconds 0.5
 ```
 
-If you want to test the opposite direction:
+Opposite direction:
 
 ```bash
 python3 examples/vision/tilt_telemetry_probe.py \
@@ -218,62 +444,27 @@ python3 examples/vision/tilt_telemetry_probe.py \
   --pitch-seconds 0.5
 ```
 
-Do not increase these values until we understand the units and direction.
-
-## 7. What The Output Means
-
-Important fields:
+Look for:
 
 ```text
-available_methods
+connected: true
+available_methods includes "attitude"
+available_methods includes "rpy"
 initial_rpy
 after_tilt_rpy
 before_image.detections
 after_image.detections
-tilt_command
 ```
 
-What we want:
+Saved images:
 
 ```text
-available_methods includes "attitude"
-available_methods includes "rpy"
-initial_rpy has 3 values
-after_tilt_rpy changes after the pitch command
-YOLO detects a person box
+tilt_probe_runs/latest/
 ```
 
-If `attitude` is missing, the Python backend may not expose body pitch control.
+## 8. Questions For The Dog Developers
 
-If `rpy` is missing, we need a different telemetry API.
-
-If `rpy` does not change after the tilt command, the command may use different
-units, the command may be ignored, or pitch telemetry may be reported somewhere
-else.
-
-## 8. Camera-Only Height Logic We Are Trying To Enable
-
-The final camera-only measurement should work like this:
-
-1. Dog stands.
-2. Dog tilts/aims camera.
-3. OpenCV/YOLO finds the person box.
-4. We read actual pitch telemetry at capture time.
-5. We combine:
-
-```text
-camera height from floor
-camera pitch
-camera mounting offset
-vertical camera FOV
-person head/feet pixel positions
-```
-
-Then we calculate height from geometry.
-
-## 9. Questions For The Dog Developers
-
-Send them these questions:
+Ask:
 
 ```text
 1. What are the units for attitude(roll_vel, pitch_vel, yaw_vel, height_vel)?
@@ -287,15 +478,18 @@ Send them these questions:
 9. Is there an API to read current camera pitch directly?
 ```
 
-## 10. What To Send Back After Testing
+## 9. What To Send Back After Today
 
 Send:
 
-- full terminal output from the safe probe
-- full terminal output from the tiny tilt probe
-- the saved images from `tilt_probe_runs/latest/`
-- the dog IP/network setup you used
-- whether the person was visible in the camera frame
+- terminal output from `inspect-grid`
+- terminal output from `capture-grid`
+- terminal output from `calibrate`
+- terminal output from `capture-laser-samples`
+- terminal output from `calibrate-laser`
+- `camera_calibration_runs/latest/calibration.json`
+- a few accepted grid images
+- a few laser images
+- notes on grid square size and grid row/column count
 
-That is enough to decide whether we can build the camera-only tilt measurement
-without waiting for the distance sensor.
+That gives enough information to verify whether the camera calibration is good.

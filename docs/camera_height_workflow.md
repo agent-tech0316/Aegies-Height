@@ -1,115 +1,77 @@
 # Robot Camera Height Workflow
 
-This is the new direction of the project:
+The project now has two paths that work together:
 
-- Code runs on the Aegis/D1 robot.
-- The robot code talks directly to the dog camera.
-- The dog camera is calibrated from the wall grid shown in `test_camera.jpg`.
-- Person height is estimated with YOLO/OpenCV plus radar distance.
+1. **Camera calibration**: wall grid + laser samples solve camera intrinsics and distortion.
+2. **Height measurement**: YOLO/OpenCV detects the person, and later dog tilt telemetry helps calculate height.
 
-## Setup
+For today, do the **camera calibration** path.
 
-Install the vision dependencies on the robot/Linux environment:
-
-```bash
-python3 -m pip install -r requirements-vision.txt
-```
-
-The included model is:
+## Files
 
 ```text
-models/yolov8n.onnx
+examples/vision/grid_laser_calibration.py # today's calibration script
+examples/vision/height_calculator.py      # height/distance helper script
+examples/vision/tilt_telemetry_probe.py   # later tilt telemetry probe
+docs/dog_testing_runbook.md               # full command runbook
+test_camera.jpg                           # sample grid image
+models/yolov8n.onnx                       # YOLO model
 ```
 
-This is YOLO running through OpenCV DNN, so no heavyweight `ultralytics` or
-PyTorch install is required for the robot path.
+## Today: Calibrate The Camera
 
-## 1. Check The Grid
+The wall grid + laser process does not train a model. It solves geometry:
 
-Measure the real grid square size first. Then run:
+```text
+known real-world grid/laser point -> camera pixel point
+```
+
+The output is:
+
+```text
+camera_calibration_runs/latest/calibration.json
+```
+
+That file is what we use later to improve height accuracy.
+
+### 1. Inspect The Grid
 
 ```bash
-python3 examples/vision/height_calculator.py inspect-grid \
+python3 examples/vision/grid_laser_calibration.py inspect-grid \
   --image test_camera.jpg \
   --grid-rows 12 \
   --grid-cols 7 \
   --square-size-cm 10
 ```
 
-Adjust `--grid-rows`, `--grid-cols`, and `--square-size-cm` to match the actual tape grid.
+Good result:
 
-Verify YOLO loads:
-
-```bash
-python3 examples/vision/height_calculator.py verify-yolo
+```text
+grid_found=true
+point_count=84
 ```
 
-## 2. Capture Many Calibration Images
-
-Run this on the robot while the grid is visible from many angles and distances:
+### 2. Capture Grid Images
 
 ```bash
-python3 examples/vision/height_calculator.py capture-grid \
-  --count 1000 \
-  --interval-sec 0.05 \
+python3 examples/vision/grid_laser_calibration.py capture-grid \
+  --count 200 \
+  --interval-sec 0.1 \
   --grid-rows 12 \
   --grid-cols 7 \
   --square-size-cm 10
 ```
 
-Move the robot/camera so the grid appears in different parts of the image. A thousand nearly identical pictures are less useful than fewer pictures with real angle and position variety.
-
-## 3. Capture Laser-Labeled Grid Samples
-
-This is the assisted calibration mode you described: a person points a laser into one grid box, and you tell the script which box it is in.
-
-Boxes are numbered from the top-left, starting at `1,1`. With `7` vertical lines and `12` horizontal lines, the grid has `6 x 11` boxes.
-
-Interactive mode:
-
-```bash
-python3 examples/vision/height_calculator.py capture-laser-samples \
-  --interactive \
-  --count 100 \
-  --grid-rows 12 \
-  --grid-cols 7 \
-  --square-size-cm 10
-```
-
-For every capture, type the box as:
+Saved to:
 
 ```text
-row,col
+camera_calibration_runs/latest/images/
 ```
 
-Example:
-
-```text
-3,5
-```
-
-Single known box mode:
+### 3. Calibrate From Grid Images
 
 ```bash
-python3 examples/vision/height_calculator.py capture-laser-samples \
-  --count 10 \
-  --box-row 3 \
-  --box-col 5 \
-  --grid-rows 12 \
-  --grid-cols 7 \
-  --square-size-cm 10
-```
-
-The script saves each image and appends one row per image to:
-
-```text
-camera_calibration_runs/latest/laser_samples.jsonl
-```
-
-## 4. Calibrate
-
-```bash
-python3 examples/vision/height_calculator.py calibrate \
+python3 examples/vision/grid_laser_calibration.py calibrate \
   --image-dir camera_calibration_runs/latest/images \
   --output camera_calibration_runs/latest/calibration.json \
   --min-accepted 30 \
@@ -118,12 +80,36 @@ python3 examples/vision/height_calculator.py calibrate \
   --square-size-cm 10
 ```
 
-The calibration file contains the camera matrix, distortion coefficients, and reprojection error.
+### 4. Capture Laser-Labeled Samples
 
-To use the laser-labeled dataset:
+Point the laser into a grid box and enter the box as `row,col`.
 
 ```bash
-python3 examples/vision/height_calculator.py calibrate-laser \
+python3 examples/vision/grid_laser_calibration.py capture-laser-samples \
+  --interactive \
+  --count 50 \
+  --grid-rows 12 \
+  --grid-cols 7 \
+  --square-size-cm 10
+```
+
+Example prompt answer:
+
+```text
+3,5
+```
+
+Saved to:
+
+```text
+camera_calibration_runs/latest/laser_images/
+camera_calibration_runs/latest/laser_samples.jsonl
+```
+
+### 5. Calibrate With Laser Samples
+
+```bash
+python3 examples/vision/grid_laser_calibration.py calibrate-laser \
   --samples camera_calibration_runs/latest/laser_samples.jsonl \
   --output camera_calibration_runs/latest/calibration.json \
   --min-accepted 10 \
@@ -132,62 +118,42 @@ python3 examples/vision/height_calculator.py calibrate-laser \
   --square-size-cm 10
 ```
 
-This uses the detected grid intersections plus the laser-labeled box center.
-The report includes average/max laser reprojection error in pixels.
+Good output includes:
 
-## 5. Estimate Person Height
-
-Radar supplies the distance in centimeters. YOLO supplies the person box.
-
-```bash
-python3 examples/vision/height_calculator.py estimate-height \
-  --image person.jpg \
-  --distance-cm 250 \
-  --calibration camera_calibration_runs/latest/calibration.json
+```text
+accepted_count >= 10
+rms_reprojection_error
+laser_error_px_avg
 ```
 
-For the live robot path, capture one dog-camera frame and estimate height in one command:
+## Later: Dog Tilt Measurement
+
+Later, we keep the tilt path. The dog should tilt/aim the camera, YOLO finds the
+person, and we use pitch telemetry plus calibrated camera geometry.
+
+Probe command:
 
 ```bash
-python3 examples/vision/height_calculator.py capture-height \
-  --distance-cm 250 \
-  --calibration camera_calibration_runs/latest/calibration.json
+python3 examples/vision/tilt_telemetry_probe.py \
+  --host <robot-ip> \
+  --stand \
+  --skip-tilt
 ```
 
-If the person is too close, too far, cut off, or off-center, use auto framing:
+Tiny tilt command:
 
 ```bash
-python3 examples/vision/height_calculator.py auto-capture-height \
-  --distance-cm 250 \
-  --calibration camera_calibration_runs/latest/calibration.json
+python3 examples/vision/tilt_telemetry_probe.py \
+  --host <robot-ip> \
+  --stand \
+  --pitch-vel 0.04 \
+  --pitch-seconds 0.5
 ```
 
-By default this only prints the movement it would make. To actually move the dog,
-use:
+## Full Runbook
 
-```bash
-python3 examples/vision/height_calculator.py auto-capture-height \
-  --distance-cm 250 \
-  --calibration camera_calibration_runs/latest/calibration.json \
-  --execute-motion
+Use this for exact setup, SSH, calibration, checking, and tilt commands:
+
+```text
+docs/dog_testing_runbook.md
 ```
-
-Auto framing uses the raw `zsibot` backend, not `sess.motion.cmd_vel`.
-
-If YOLO is not ready, test the math with a manual box:
-
-```bash
-python3 examples/vision/height_calculator.py estimate-height \
-  --image person.jpg \
-  --distance-cm 250 \
-  --manual-box 720,120,260,820 \
-  --calibration camera_calibration_runs/latest/calibration.json
-```
-
-## Accuracy Notes
-
-Radar distance must be the distance from the camera plane to the person, not to a wall behind them.
-
-The person must be full body in frame. If the head or feet are cut off, the height estimate is not valid.
-
-The tape grid must be flat and measured accurately. If the grid detector cannot find stable intersections, use a printed checkerboard or ChArUco board instead.

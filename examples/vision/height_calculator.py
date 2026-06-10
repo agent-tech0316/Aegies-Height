@@ -1,51 +1,34 @@
-"""Robot-camera calibration and person height estimation.
+"""Robot-camera person height estimation.
 
 This is the robot-only vision path. It runs on the dog/robot side and talks
-directly to the dog camera.
+directly to the dog camera while a Raspberry Pi reads the HC-SR04 depth sensor.
 
 Workflow:
-  1. Capture many robot-camera frames of the wall grid.
-  2. Calibrate the camera from the detected grid intersections.
-  3. Detect a person with YOLO and combine the pixel height with radar distance.
+  1. Use YOLO/OpenCV to detect the full-body person box in the dog camera frame.
+  2. Use Raspberry Pi GPIO to read distance from the HC-SR04 ultrasonic sensor.
+  3. Estimate height from pixel height, sensor distance, and camera vertical FOV.
+  4. Optional: solve camera vertical FOV once from a known-height reference.
 
-Robot repositioning uses the raw zsibot backend, not sess.motion.cmd_vel.
+The height estimate uses the pinhole-camera relationship:
 
-The height estimate uses calibrated camera intrinsics:
+    height_cm = distance_cm * pixel_height / focal_length_y_px
 
-    height_cm = distance_cm * abs(y_bottom_normalized - y_top_normalized)
-
-That is the pinhole-camera relationship after undistorting image points. Radar
-should provide the distance from the robot camera plane to the person.
+The distance should be the distance from the camera/sensor plane to the person.
 """
 from __future__ import annotations
 
 import argparse
-import itertools
 import json
 import math
 import time
 from dataclasses import asdict, dataclass
-from datetime import datetime
 from pathlib import Path
 
 
 DEFAULT_RTSP_URL = "rtsp://192.168.234.1:8554/test"
 DEFAULT_MODEL = "models/yolov8n.onnx"
-
-
-@dataclass(frozen=True)
-class GridSpec:
-    rows: int
-    cols: int
-    square_size_cm: float
-
-    @property
-    def box_rows(self) -> int:
-        return self.rows - 1
-
-    @property
-    def box_cols(self) -> int:
-        return self.cols - 1
+DEFAULT_HCSR04_TRIGGER_PIN = 23
+DEFAULT_HCSR04_ECHO_PIN = 24
 
 
 @dataclass(frozen=True)
@@ -84,6 +67,76 @@ class FrameDecision:
     guidance: str
 
 
+def focal_y_px_from_vertical_fov(*, image_height: int, vertical_fov_deg: float) -> float:
+    if vertical_fov_deg <= 0.0 or vertical_fov_deg >= 179.0:
+        raise ValueError("--vertical-fov-deg must be between 0 and 179 degrees.")
+    return image_height / (2.0 * math.tan(math.radians(vertical_fov_deg) / 2.0))
+
+
+def vertical_fov_from_focal_y_px(*, image_height: int, focal_y_px: float) -> float:
+    if focal_y_px <= 0.0:
+        raise ValueError("focal_y_px must be positive.")
+    return math.degrees(2.0 * math.atan(image_height / (2.0 * focal_y_px)))
+
+
+def estimate_height_from_box_fov(
+    *,
+    person: PersonBox,
+    image_height: int,
+    distance_cm: float,
+    vertical_fov_deg: float,
+    camera_pitch_deg: float,
+) -> dict[str, float]:
+    focal_y_px = focal_y_px_from_vertical_fov(
+        image_height=image_height,
+        vertical_fov_deg=vertical_fov_deg,
+    )
+    image_center_y = image_height / 2.0
+    top_ray_deg = camera_pitch_deg + math.degrees(math.atan((image_center_y - person.top_y) / focal_y_px))
+    bottom_ray_deg = camera_pitch_deg + math.degrees(math.atan((image_center_y - person.bottom_y) / focal_y_px))
+    height_cm = distance_cm * (
+        math.tan(math.radians(top_ray_deg)) - math.tan(math.radians(bottom_ray_deg))
+    )
+    angular_height_deg = math.degrees(2.0 * math.atan(person.height / (2.0 * focal_y_px)))
+    return {
+        "focal_length_y_px": focal_y_px,
+        "angular_height_deg": angular_height_deg,
+        "camera_pitch_deg": camera_pitch_deg,
+        "top_ray_world_deg": top_ray_deg,
+        "bottom_ray_world_deg": bottom_ray_deg,
+        "person_height_cm": abs(height_cm),
+        "person_height_in": abs(height_cm) / 2.54,
+    }
+
+
+def solve_focal_y_px_from_known_height(
+    *,
+    person: PersonBox,
+    image_height: int,
+    distance_cm: float,
+    known_height_cm: float,
+    camera_pitch_deg: float,
+) -> float:
+    def projected_height(focal_y_px: float) -> float:
+        image_center_y = image_height / 2.0
+        top_ray_deg = camera_pitch_deg + math.degrees(math.atan((image_center_y - person.top_y) / focal_y_px))
+        bottom_ray_deg = camera_pitch_deg + math.degrees(math.atan((image_center_y - person.bottom_y) / focal_y_px))
+        return abs(
+            distance_cm
+            * (math.tan(math.radians(top_ray_deg)) - math.tan(math.radians(bottom_ray_deg)))
+        )
+
+    low = image_height * 0.05
+    high = image_height * 20.0
+    for _ in range(80):
+        mid = (low + high) / 2.0
+        if projected_height(mid) > known_height_cm:
+            low = mid
+        else:
+            high = mid
+    return (low + high) / 2.0
+
+
 def require_cv2_numpy():
     try:
         import cv2
@@ -96,13 +149,57 @@ def require_cv2_numpy():
     return cv2, np
 
 
-def save_json(path: Path, data: object) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+def read_hcsr04_distance_cm(
+    *,
+    trigger_pin: int,
+    echo_pin: int,
+    samples: int,
+    sample_delay_sec: float,
+    max_distance_cm: float,
+) -> float:
+    try:
+        from gpiozero import DistanceSensor
+    except ModuleNotFoundError as exc:
+        raise RuntimeError(
+            "HC-SR04 distance reading needs gpiozero on the Raspberry Pi. "
+            "Install with: python3 -m pip install gpiozero"
+        ) from exc
+
+    sensor = DistanceSensor(
+        echo=echo_pin,
+        trigger=trigger_pin,
+        max_distance=max_distance_cm / 100.0,
+    )
+    distances: list[float] = []
+    try:
+        time.sleep(0.1)
+        for _ in range(max(1, samples)):
+            distance_cm = float(sensor.distance) * 100.0
+            if math.isfinite(distance_cm) and 0.0 < distance_cm <= max_distance_cm:
+                distances.append(distance_cm)
+            time.sleep(max(0.0, sample_delay_sec))
+    finally:
+        sensor.close()
+
+    if not distances:
+        raise RuntimeError("HC-SR04 did not return a valid distance sample.")
+    distances.sort()
+    return distances[len(distances) // 2]
 
 
-def load_json(path: Path) -> dict[str, object]:
-    return json.loads(path.read_text(encoding="utf-8"))
+def resolve_distance_cm(args: argparse.Namespace) -> tuple[float, str]:
+    if getattr(args, "hcsr04", False):
+        distance_cm = read_hcsr04_distance_cm(
+            trigger_pin=args.hcsr04_trigger_pin,
+            echo_pin=args.hcsr04_echo_pin,
+            samples=args.hcsr04_samples,
+            sample_delay_sec=args.hcsr04_sample_delay_sec,
+            max_distance_cm=args.hcsr04_max_distance_cm,
+        )
+        return distance_cm, "hcsr04"
+    if getattr(args, "distance_cm", None) is not None:
+        return float(args.distance_cm), "manual"
+    raise RuntimeError("Provide --hcsr04 for live sensor distance or --distance-cm for a manual test value.")
 
 
 def open_camera(rtsp_url: str):
@@ -125,218 +222,6 @@ def capture_one_frame(*, rtsp_url: str, output: Path, jpeg_quality: int) -> Path
     finally:
         cap.release()
     return output
-
-
-def capture_frames(args: argparse.Namespace) -> None:
-    cv2, _ = require_cv2_numpy()
-    output_dir = Path(args.output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    cap = open_camera(args.rtsp_url)
-    saved = 0
-    accepted = 0
-    records: list[dict[str, object]] = []
-    next_capture_at = time.monotonic()
-    started_at = datetime.now().isoformat(timespec="seconds")
-
-    print(f"capture_started_at={started_at}")
-    print(f"rtsp_url={args.rtsp_url}")
-    print(f"target_frames={args.count}")
-    print(f"output_dir={output_dir}")
-
-    try:
-        while saved < args.count:
-            ok, frame = cap.read()
-            if not ok or frame is None:
-                print("camera_read=failed_reconnecting")
-                cap.release()
-                time.sleep(0.5)
-                cap = open_camera(args.rtsp_url)
-                continue
-
-            now = time.monotonic()
-            if now < next_capture_at:
-                continue
-            next_capture_at = now + args.interval_sec
-
-            saved += 1
-            image_path = output_dir / f"grid_{saved:06d}.jpg"
-            cv2.imwrite(str(image_path), frame, [int(cv2.IMWRITE_JPEG_QUALITY), args.jpeg_quality])
-
-            found, points, debug = detect_grid_points(
-                frame,
-                GridSpec(args.grid_rows, args.grid_cols, args.square_size_cm),
-                blue_hue_low=args.blue_hue_low,
-                blue_hue_high=args.blue_hue_high,
-                min_line_length=args.min_line_length,
-            )
-            if found:
-                accepted += 1
-            records.append(
-                {
-                    "image": str(image_path),
-                    "grid_found": found,
-                    "point_count": 0 if points is None else int(len(points)),
-                    "debug": debug,
-                }
-            )
-            if saved % args.progress_every == 0 or found:
-                print(
-                    f"saved={saved} accepted={accepted} "
-                    f"last_grid_found={str(found).lower()} image={image_path}"
-                )
-    finally:
-        cap.release()
-
-    save_json(
-        output_dir / "capture_records.json",
-        {
-            "started_at": started_at,
-            "finished_at": datetime.now().isoformat(timespec="seconds"),
-            "rtsp_url": args.rtsp_url,
-            "saved_count": saved,
-            "accepted_count": accepted,
-            "grid": asdict(GridSpec(args.grid_rows, args.grid_cols, args.square_size_cm)),
-            "records": records,
-        },
-    )
-    print(f"capture_complete=true saved={saved} accepted={accepted}")
-
-
-def group_close_values(values: list[float], tolerance: float) -> list[float]:
-    if not values:
-        return []
-    grouped: list[list[float]] = []
-    for value in sorted(values):
-        if not grouped or abs(value - sum(grouped[-1]) / len(grouped[-1])) > tolerance:
-            grouped.append([value])
-        else:
-            grouped[-1].append(value)
-    return [sum(group) / len(group) for group in grouped]
-
-
-def choose_evenly_spaced_lines(lines: list[float], expected_count: int) -> list[float]:
-    """Choose the most grid-like subset when Hough finds duplicate tape fragments."""
-
-    lines = sorted(lines)
-    if len(lines) <= expected_count:
-        return lines
-
-    best_subset: tuple[float, ...] | None = None
-    best_score: float | None = None
-    for subset in itertools.combinations(lines, expected_count):
-        gaps = [subset[index + 1] - subset[index] for index in range(len(subset) - 1)]
-        if not gaps or min(gaps) <= 0:
-            continue
-        mean_gap = sum(gaps) / len(gaps)
-        spacing_error = sum((gap - mean_gap) ** 2 for gap in gaps) / len(gaps)
-        span_bonus = (subset[-1] - subset[0]) * 0.01
-        score = spacing_error - span_bonus
-        if best_score is None or score < best_score:
-            best_score = score
-            best_subset = subset
-
-    return list(best_subset or lines[:expected_count])
-
-
-def detect_grid_points(
-    image,
-    spec: GridSpec,
-    *,
-    blue_hue_low: int,
-    blue_hue_high: int,
-    min_line_length: int,
-):
-    """Detect blue tape grid intersections from an image.
-
-    The wall target in test_camera.jpg is a blue-tape grid. This detector finds
-    blue pixels, extracts long horizontal/vertical line segments, groups them,
-    and returns their intersections as calibration points.
-    """
-
-    cv2, np = require_cv2_numpy()
-    hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
-    lower = np.array([blue_hue_low, 50, 35], dtype=np.uint8)
-    upper = np.array([blue_hue_high, 255, 255], dtype=np.uint8)
-    mask = cv2.inRange(hsv, lower, upper)
-    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, np.ones((5, 5), np.uint8))
-    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))
-
-    lines = cv2.HoughLinesP(
-        mask,
-        rho=1,
-        theta=np.pi / 180.0,
-        threshold=80,
-        minLineLength=min_line_length,
-        maxLineGap=25,
-    )
-    if lines is None:
-        return False, None, {"reason": "no_blue_grid_lines"}
-
-    vertical_x: list[float] = []
-    horizontal_y: list[float] = []
-    for raw in lines.reshape(-1, 4):
-        x1, y1, x2, y2 = [float(v) for v in raw]
-        dx = x2 - x1
-        dy = y2 - y1
-        length = math.hypot(dx, dy)
-        if length < min_line_length:
-            continue
-        if abs(dx) < max(12.0, abs(dy) * 0.25):
-            vertical_x.append((x1 + x2) / 2.0)
-        elif abs(dy) < max(12.0, abs(dx) * 0.25):
-            horizontal_y.append((y1 + y2) / 2.0)
-
-    x_lines = group_close_values(vertical_x, tolerance=22.0)
-    y_lines = group_close_values(horizontal_y, tolerance=22.0)
-
-    raw_vertical_count = len(x_lines)
-    raw_horizontal_count = len(y_lines)
-
-    if len(x_lines) < spec.cols or len(y_lines) < spec.rows:
-        return (
-            False,
-            None,
-            {
-                "reason": "not_enough_grid_lines",
-                "vertical_lines": raw_vertical_count,
-                "horizontal_lines": raw_horizontal_count,
-                "needed_vertical_lines": spec.cols,
-                "needed_horizontal_lines": spec.rows,
-            },
-        )
-
-    x_lines = choose_evenly_spaced_lines(x_lines, spec.cols)
-    y_lines = choose_evenly_spaced_lines(y_lines, spec.rows)
-    points = np.array([[x, y] for y in y_lines for x in x_lines], dtype=np.float32)
-    return True, points.reshape(-1, 1, 2), {
-        "vertical_lines": len(x_lines),
-        "horizontal_lines": len(y_lines),
-        "raw_vertical_lines": raw_vertical_count,
-        "raw_horizontal_lines": raw_horizontal_count,
-        "selected_x_lines": [round(value, 2) for value in x_lines],
-        "selected_y_lines": [round(value, 2) for value in y_lines],
-    }
-
-
-def object_points(spec: GridSpec):
-    _, np = require_cv2_numpy()
-    points = []
-    for row in range(spec.rows):
-        for col in range(spec.cols):
-            points.append([col * spec.square_size_cm, row * spec.square_size_cm, 0.0])
-    return np.asarray(points, dtype=np.float32)
-
-
-def grid_box_center_object_point(*, spec: GridSpec, row: int, col: int):
-    _, np = require_cv2_numpy()
-    if row < 1 or row > spec.box_rows:
-        raise ValueError(f"box row must be 1..{spec.box_rows}, got {row}")
-    if col < 1 or col > spec.box_cols:
-        raise ValueError(f"box col must be 1..{spec.box_cols}, got {col}")
-    x_cm = (col - 0.5) * spec.square_size_cm
-    y_cm = (row - 0.5) * spec.square_size_cm
-    return np.asarray([[x_cm, y_cm, 0.0]], dtype=np.float32)
 
 
 def detect_laser_dot(
@@ -379,271 +264,6 @@ def detect_laser_dot(
         return None, {"reason": "laser_not_detected", "contours": len(contours)}
     _, dot = max(candidates, key=lambda item: item[0])
     return dot, {"laser_candidates": len(candidates)}
-
-
-def append_jsonl(path: Path, row: dict[str, object]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a", encoding="utf-8") as file:
-        file.write(json.dumps(row, separators=(",", ":")) + "\n")
-
-
-def load_jsonl(path: Path) -> list[dict[str, object]]:
-    rows: list[dict[str, object]] = []
-    with path.open("r", encoding="utf-8") as file:
-        for line in file:
-            line = line.strip()
-            if line:
-                rows.append(json.loads(line))
-    return rows
-
-
-def capture_laser_samples(args: argparse.Namespace) -> None:
-    cv2, _ = require_cv2_numpy()
-    spec = GridSpec(args.grid_rows, args.grid_cols, args.square_size_cm)
-    output_dir = Path(args.output_dir)
-    samples_path = Path(args.samples)
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    print(f"laser_samples={samples_path}")
-    print(f"grid_boxes={spec.box_rows}x{spec.box_cols}")
-    print("box_labels_are=1_based_from_top_left")
-
-    for index in range(1, args.count + 1):
-        if args.interactive:
-            raw = input(f"sample {index}/{args.count} box row,col (or q)> ").strip().lower()
-            if raw in {"q", "quit", "exit"}:
-                break
-            row, col = [int(part.strip()) for part in raw.split(",", 1)]
-        else:
-            if args.box_row is None or args.box_col is None:
-                raise RuntimeError("Use --interactive or provide --box-row and --box-col.")
-            row, col = args.box_row, args.box_col
-
-        grid_box_center_object_point(spec=spec, row=row, col=col)
-        image_path = output_dir / f"laser_{int(time.time())}_{index:04d}.jpg"
-        capture_one_frame(rtsp_url=args.rtsp_url, output=image_path, jpeg_quality=args.jpeg_quality)
-        image = cv2.imread(str(image_path))
-        if image is None:
-            raise RuntimeError(f"OpenCV could not read captured image: {image_path}")
-
-        dot, laser_debug = detect_laser_dot(
-            image,
-            color=args.laser_color,
-            min_area=args.laser_min_area,
-            max_area=args.laser_max_area,
-        )
-        grid_found, grid_points, grid_debug = detect_grid_points(
-            image,
-            spec,
-            blue_hue_low=args.blue_hue_low,
-            blue_hue_high=args.blue_hue_high,
-            min_line_length=args.min_line_length,
-        )
-        sample = {
-            "created_at": datetime.now().isoformat(timespec="seconds"),
-            "image": str(image_path),
-            "box_row": row,
-            "box_col": col,
-            "box_origin": "top_left",
-            "grid": asdict(spec),
-            "laser_color": args.laser_color,
-            "laser_detected": dot is not None,
-            "laser_dot": None if dot is None else asdict(dot),
-            "grid_found": grid_found,
-            "grid_point_count": 0 if grid_points is None else int(len(grid_points)),
-            "laser_debug": laser_debug,
-            "grid_debug": grid_debug,
-            "label": args.label,
-        }
-        append_jsonl(samples_path, sample)
-        print(
-            f"sample_saved={image_path} box={row},{col} "
-            f"laser_detected={str(dot is not None).lower()} grid_found={str(grid_found).lower()}"
-        )
-
-
-def calibrate_from_images(args: argparse.Namespace) -> None:
-    cv2, np = require_cv2_numpy()
-    spec = GridSpec(args.grid_rows, args.grid_cols, args.square_size_cm)
-    image_dir = Path(args.image_dir)
-    images = sorted(image_dir.glob("*.jpg")) + sorted(image_dir.glob("*.png"))
-    if not images:
-        raise RuntimeError(f"No calibration images found in {image_dir}")
-
-    object_sets = []
-    image_sets = []
-    accepted: list[str] = []
-    rejected: list[dict[str, object]] = []
-    image_size: tuple[int, int] | None = None
-    object_template = object_points(spec)
-
-    for image_path in images:
-        image = cv2.imread(str(image_path))
-        if image is None:
-            rejected.append({"image": str(image_path), "reason": "opencv_read_failed"})
-            continue
-        height, width = image.shape[:2]
-        image_size = (width, height)
-        found, points, debug = detect_grid_points(
-            image,
-            spec,
-            blue_hue_low=args.blue_hue_low,
-            blue_hue_high=args.blue_hue_high,
-            min_line_length=args.min_line_length,
-        )
-        if not found or points is None:
-            rejected.append({"image": str(image_path), **debug})
-            continue
-        object_sets.append(object_template)
-        image_sets.append(points)
-        accepted.append(str(image_path))
-
-    if image_size is None:
-        raise RuntimeError("OpenCV could not read any calibration image.")
-    if len(accepted) < args.min_accepted:
-        raise RuntimeError(
-            f"Need at least {args.min_accepted} accepted grid images, got {len(accepted)}. "
-            "Capture more images with the grid visible from different angles."
-        )
-
-    rms, camera_matrix, distortion, rvecs, tvecs = cv2.calibrateCamera(
-        object_sets,
-        image_sets,
-        image_size,
-        None,
-        None,
-    )
-    if not np.isfinite(camera_matrix).all() or not np.isfinite(distortion).all():
-        raise RuntimeError("Calibration produced non-finite values; improve grid coverage.")
-
-    report = {
-        "created_at": datetime.now().isoformat(timespec="seconds"),
-        "image_dir": str(image_dir),
-        "image_width": image_size[0],
-        "image_height": image_size[1],
-        "grid": asdict(spec),
-        "attempt_count": len(images),
-        "accepted_count": len(accepted),
-        "rejected_count": len(rejected),
-        "rms_reprojection_error": float(rms),
-        "camera_matrix": camera_matrix.tolist(),
-        "distortion_coefficients": distortion.ravel().tolist(),
-        "accepted_images": accepted,
-        "rejected_images": rejected,
-        "note": (
-            "This calibration uses the blue tape grid. For best accuracy, keep "
-            "the grid flat, measure square_size_cm carefully, and capture many "
-            "angles/distances across the full image."
-        ),
-    }
-    save_json(Path(args.output), report)
-    print(f"calibration_saved={args.output}")
-    print(f"accepted_count={len(accepted)}")
-    print(f"rms_reprojection_error={float(rms):.6f}")
-
-
-def calibrate_from_laser_samples(args: argparse.Namespace) -> None:
-    cv2, np = require_cv2_numpy()
-    spec = GridSpec(args.grid_rows, args.grid_cols, args.square_size_cm)
-    samples = load_jsonl(Path(args.samples))
-    if not samples:
-        raise RuntimeError(f"No laser samples found: {args.samples}")
-
-    object_sets = []
-    image_sets = []
-    accepted: list[dict[str, object]] = []
-    rejected: list[dict[str, object]] = []
-    image_size: tuple[int, int] | None = None
-    base_object_points = object_points(spec).reshape(-1, 3)
-
-    for sample in samples:
-        image_path = Path(str(sample["image"]))
-        image = cv2.imread(str(image_path))
-        if image is None:
-            rejected.append({"image": str(image_path), "reason": "opencv_read_failed"})
-            continue
-        height, width = image.shape[:2]
-        image_size = (width, height)
-
-        found, grid_points, grid_debug = detect_grid_points(
-            image,
-            spec,
-            blue_hue_low=args.blue_hue_low,
-            blue_hue_high=args.blue_hue_high,
-            min_line_length=args.min_line_length,
-        )
-        if not found or grid_points is None:
-            rejected.append({"image": str(image_path), **grid_debug})
-            continue
-
-        laser_dot = sample.get("laser_dot")
-        if not isinstance(laser_dot, dict):
-            rejected.append({"image": str(image_path), "reason": "laser_dot_missing"})
-            continue
-
-        row = int(sample["box_row"])
-        col = int(sample["box_col"])
-        laser_object = grid_box_center_object_point(spec=spec, row=row, col=col)
-        laser_image = np.asarray([[[float(laser_dot["x"]), float(laser_dot["y"])]]], dtype=np.float32)
-
-        object_set = np.vstack([base_object_points, laser_object.reshape(-1, 3)])
-        image_set = np.vstack([grid_points.reshape(-1, 2), laser_image.reshape(-1, 2)]).reshape(-1, 1, 2)
-        object_sets.append(object_set.astype(np.float32))
-        image_sets.append(image_set.astype(np.float32))
-        accepted.append({"image": str(image_path), "box_row": row, "box_col": col})
-
-    if image_size is None:
-        raise RuntimeError("OpenCV could not read any laser sample image.")
-    if len(accepted) < args.min_accepted:
-        raise RuntimeError(
-            f"Need at least {args.min_accepted} accepted laser samples, got {len(accepted)}."
-        )
-
-    flags = 0
-    if args.fix_principal_point:
-        flags |= cv2.CALIB_FIX_PRINCIPAL_POINT
-    rms, camera_matrix, distortion, rvecs, tvecs = cv2.calibrateCamera(
-        object_sets,
-        image_sets,
-        image_size,
-        None,
-        None,
-        flags=flags,
-    )
-    if not np.isfinite(camera_matrix).all() or not np.isfinite(distortion).all():
-        raise RuntimeError("Calibration produced non-finite values; improve laser/grid samples.")
-
-    laser_errors: list[float] = []
-    grid_count = spec.rows * spec.cols
-    for object_set, image_set, rvec, tvec in zip(object_sets, image_sets, rvecs, tvecs):
-        projected, _ = cv2.projectPoints(object_set, rvec, tvec, camera_matrix, distortion)
-        actual = image_set.reshape(-1, 2)
-        projected_2d = projected.reshape(-1, 2)
-        laser_errors.append(float(np.linalg.norm(projected_2d[grid_count] - actual[grid_count])))
-
-    report = {
-        "created_at": datetime.now().isoformat(timespec="seconds"),
-        "source": "laser_grid_samples",
-        "samples": args.samples,
-        "image_width": image_size[0],
-        "image_height": image_size[1],
-        "grid": asdict(spec),
-        "attempt_count": len(samples),
-        "accepted_count": len(accepted),
-        "rejected_count": len(rejected),
-        "rms_reprojection_error": float(rms),
-        "laser_reprojection_error_px_avg": float(sum(laser_errors) / len(laser_errors)),
-        "laser_reprojection_error_px_max": float(max(laser_errors)),
-        "camera_matrix": camera_matrix.tolist(),
-        "distortion_coefficients": distortion.ravel().tolist(),
-        "accepted_samples": accepted,
-        "rejected_samples": rejected,
-    }
-    save_json(Path(args.output), report)
-    print(f"calibration_saved={args.output}")
-    print(f"accepted_count={len(accepted)}")
-    print(f"rms_reprojection_error={float(rms):.6f}")
-    print(f"laser_error_px_avg={report['laser_reprojection_error_px_avg']:.3f}")
 
 
 def letterbox(image, size: int):
@@ -783,97 +403,13 @@ def evaluate_person_frame(
     return FrameDecision(status="reject", reasons=reasons, guidance="reposition")
 
 
-def raw_robot_move(
-    *,
-    robot_host: str,
-    variant: str,
-    vx: float,
-    vy: float,
-    yaw_rate: float,
-    seconds: float,
-    local_port: int,
-) -> None:
-    try:
-        from ff_sdk.internal.oem.zsibot import ZsibotClient, detect_local_ip
-    except ModuleNotFoundError as exc:
-        raise RuntimeError(
-            "Raw robot movement needs ff_sdk on the robot/Linux environment."
-        ) from exc
+def select_person_from_image(args: argparse.Namespace) -> tuple[PersonBox, list[PersonBox], tuple[int, int]]:
+    cv2, _ = require_cv2_numpy()
+    image = cv2.imread(str(args.image))
+    if image is None:
+        raise RuntimeError(f"OpenCV could not read image: {args.image}")
+    image_height, image_width = image.shape[:2]
 
-    local_ip = detect_local_ip(robot_host)
-    dog = ZsibotClient(
-        dog_ip=robot_host,
-        local_ip=local_ip,
-        local_port=local_port,
-        variant=variant,
-    )
-    try:
-        connected = dog.connect(settle_timeout=5.0)
-        if not connected:
-            raise RuntimeError("raw zsibot backend did not connect")
-        dog.stand_up()
-        time.sleep(2.0)
-        end = time.monotonic() + max(0.0, seconds)
-        while time.monotonic() < end:
-            dog.move(vx, vy, yaw_rate)
-            time.sleep(0.05)
-        stop_end = time.monotonic() + 0.6
-        while time.monotonic() < stop_end:
-            dog.move(0.0, 0.0, 0.0)
-            time.sleep(0.05)
-    finally:
-        dog.close()
-
-
-def move_for_guidance(args: argparse.Namespace, guidance: str) -> None:
-    motions = {
-        "move_backward": (-abs(args.nudge_speed_mps), 0.0, 0.0),
-        "move_forward": (abs(args.nudge_speed_mps), 0.0, 0.0),
-        "move_left": (0.0, abs(args.lateral_speed_mps), 0.0),
-        "move_right": (0.0, -abs(args.lateral_speed_mps), 0.0),
-    }
-    if guidance not in motions:
-        print(f"motion_skipped_guidance={guidance}")
-        return
-    vx, vy, yaw_rate = motions[guidance]
-    print(f"motion_guidance={guidance}")
-    print(f"motion_execute={str(args.execute_motion).lower()}")
-    print(f"motion_vx={vx:.3f}")
-    print(f"motion_vy={vy:.3f}")
-    print(f"motion_seconds={args.nudge_seconds:.2f}")
-    if not args.execute_motion:
-        print("planned_motion_only=true")
-        return
-    raw_robot_move(
-        robot_host=args.robot_host,
-        variant=args.variant,
-        vx=vx,
-        vy=vy,
-        yaw_rate=yaw_rate,
-        seconds=args.nudge_seconds,
-        local_port=args.local_port,
-    )
-
-
-def normalized_y_delta(
-    *,
-    calibration: dict[str, object],
-    center_x: float,
-    top_y: float,
-    bottom_y: float,
-) -> float:
-    cv2, np = require_cv2_numpy()
-    camera_matrix = np.asarray(calibration["camera_matrix"], dtype=np.float64)
-    distortion = np.asarray(calibration["distortion_coefficients"], dtype=np.float64)
-    pts = np.asarray([[[center_x, top_y]], [[center_x, bottom_y]]], dtype=np.float64)
-    undistorted = cv2.undistortPoints(pts, camera_matrix, distortion)
-    top_norm = float(undistorted[0, 0, 1])
-    bottom_norm = float(undistorted[1, 0, 1])
-    return abs(bottom_norm - top_norm)
-
-
-def estimate_height(args: argparse.Namespace) -> None:
-    calibration = load_json(Path(args.calibration))
     if args.manual_box:
         x, y, width, height = [int(value) for value in args.manual_box.split(",")]
         person = PersonBox(x, y, width, height, 1.0)
@@ -886,31 +422,121 @@ def estimate_height(args: argparse.Namespace) -> None:
             nms_threshold=args.yolo_nms,
             image_size=args.yolo_image_size,
         )
-        if not detections:
+        if len(detections) <= args.person_index:
             raise RuntimeError("No person detected. Try a clearer full-body image.")
         person = detections[args.person_index]
 
-    y_delta = normalized_y_delta(
-        calibration=calibration,
-        center_x=person.center_x,
-        top_y=person.top_y,
-        bottom_y=person.bottom_y,
+    return person, detections, (image_width, image_height)
+
+
+def estimate_height_simple(args: argparse.Namespace) -> None:
+    person, detections, (image_width, image_height) = select_person_from_image(args)
+    distance_cm, distance_source = resolve_distance_cm(args)
+    metrics = estimate_height_from_box_fov(
+        person=person,
+        image_height=image_height,
+        distance_cm=distance_cm,
+        vertical_fov_deg=args.vertical_fov_deg,
+        camera_pitch_deg=args.camera_pitch_deg,
     )
-    height_cm = args.distance_cm * y_delta
+    decision = evaluate_person_frame(
+        person=person,
+        image_width=image_width,
+        image_height=image_height,
+        edge_margin_px=args.edge_margin_px,
+        min_height_ratio=args.min_person_height_ratio,
+        max_height_ratio=args.max_person_height_ratio,
+        center_tolerance_ratio=args.center_tolerance_ratio,
+    )
     result = {
+        "mode": "known_distance_fov",
         "image": args.image,
-        "distance_cm": args.distance_cm,
+        "distance_cm": distance_cm,
+        "distance_source": distance_source,
+        "vertical_fov_deg": args.vertical_fov_deg,
+        "camera_pitch_deg": args.camera_pitch_deg,
         "person_index": args.person_index,
         "person_box": asdict(person),
-        "normalized_y_delta": y_delta,
-        "person_height_cm": height_cm,
-        "person_height_in": height_cm / 2.54,
+        "frame_status": decision.status,
+        "frame_reasons": decision.reasons,
+        "guidance": decision.guidance,
+        **metrics,
         "detections": [asdict(det) for det in detections],
+        "note": (
+            "Accuracy depends on distance_cm being the ground distance to the "
+            "person plane, camera_pitch_deg matching this frame, and vertical_fov_deg "
+            "matching this camera mode/resolution."
+        ),
     }
     print(json.dumps(result, indent=2))
 
 
-def capture_and_estimate_height(args: argparse.Namespace) -> None:
+def solve_vertical_fov(args: argparse.Namespace) -> None:
+    person, detections, (image_width, image_height) = select_person_from_image(args)
+    distance_cm, distance_source = resolve_distance_cm(args)
+    focal_y_px = solve_focal_y_px_from_known_height(
+        person=person,
+        image_height=image_height,
+        distance_cm=distance_cm,
+        known_height_cm=args.known_height_cm,
+        camera_pitch_deg=args.camera_pitch_deg,
+    )
+    vertical_fov_deg = vertical_fov_from_focal_y_px(
+        image_height=image_height,
+        focal_y_px=focal_y_px,
+    )
+    result = {
+        "mode": "solve_vertical_fov",
+        "image": args.image,
+        "distance_cm": distance_cm,
+        "distance_source": distance_source,
+        "known_height_cm": args.known_height_cm,
+        "camera_pitch_deg": args.camera_pitch_deg,
+        "person_index": args.person_index,
+        "person_box": asdict(person),
+        "image_width": image_width,
+        "image_height": image_height,
+        "focal_length_y_px": focal_y_px,
+        "vertical_fov_deg": vertical_fov_deg,
+        "detections": [asdict(det) for det in detections],
+        "next_step": (
+            "Use this vertical_fov_deg with measure-height, capture-measure-height, "
+            "or guided-measure-height at the same camera resolution."
+        ),
+    }
+    print(json.dumps(result, indent=2))
+
+
+def capture_and_solve_vertical_fov(args: argparse.Namespace) -> None:
+    image_path = capture_one_frame(
+        rtsp_url=args.rtsp_url,
+        output=Path(args.output),
+        jpeg_quality=args.jpeg_quality,
+    )
+    print(f"captured_image={image_path}")
+
+    solve_args = argparse.Namespace(
+        image=str(image_path),
+        distance_cm=args.distance_cm,
+        hcsr04=args.hcsr04,
+        hcsr04_trigger_pin=args.hcsr04_trigger_pin,
+        hcsr04_echo_pin=args.hcsr04_echo_pin,
+        hcsr04_samples=args.hcsr04_samples,
+        hcsr04_sample_delay_sec=args.hcsr04_sample_delay_sec,
+        hcsr04_max_distance_cm=args.hcsr04_max_distance_cm,
+        known_height_cm=args.known_height_cm,
+        camera_pitch_deg=args.camera_pitch_deg,
+        yolo_model=args.yolo_model,
+        yolo_confidence=args.yolo_confidence,
+        yolo_nms=args.yolo_nms,
+        yolo_image_size=args.yolo_image_size,
+        person_index=args.person_index,
+        manual_box=None,
+    )
+    solve_vertical_fov(solve_args)
+
+
+def capture_and_estimate_height_simple(args: argparse.Namespace) -> None:
     image_path = capture_one_frame(
         rtsp_url=args.rtsp_url,
         output=Path(args.output),
@@ -921,28 +547,57 @@ def capture_and_estimate_height(args: argparse.Namespace) -> None:
     estimate_args = argparse.Namespace(
         image=str(image_path),
         distance_cm=args.distance_cm,
-        calibration=args.calibration,
+        hcsr04=args.hcsr04,
+        hcsr04_trigger_pin=args.hcsr04_trigger_pin,
+        hcsr04_echo_pin=args.hcsr04_echo_pin,
+        hcsr04_samples=args.hcsr04_samples,
+        hcsr04_sample_delay_sec=args.hcsr04_sample_delay_sec,
+        hcsr04_max_distance_cm=args.hcsr04_max_distance_cm,
+        vertical_fov_deg=args.vertical_fov_deg,
+        camera_pitch_deg=args.camera_pitch_deg,
         yolo_model=args.yolo_model,
         yolo_confidence=args.yolo_confidence,
         yolo_nms=args.yolo_nms,
         yolo_image_size=args.yolo_image_size,
         person_index=args.person_index,
         manual_box=None,
+        edge_margin_px=args.edge_margin_px,
+        min_person_height_ratio=args.min_person_height_ratio,
+        max_person_height_ratio=args.max_person_height_ratio,
+        center_tolerance_ratio=args.center_tolerance_ratio,
     )
-    estimate_height(estimate_args)
+    estimate_height_simple(estimate_args)
 
 
-def auto_capture_height(args: argparse.Namespace) -> None:
+def prompt_for_guidance(guidance: str) -> str:
+    prompts = {
+        "hold_position": "Hold still.",
+        "aim_at_person": "Please stand where I can see your full body.",
+        "move_backward": "Please step back to the line.",
+        "move_forward": "Please step forward to the line.",
+        "move_left": "Please step a little to your left.",
+        "move_right": "Please step a little to your right.",
+        "reposition": "Please reposition so I can see your full body.",
+    }
+    return prompts.get(guidance, "Please reposition.")
+
+
+def guided_measure_height(args: argparse.Namespace) -> None:
     cv2, _ = require_cv2_numpy()
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    print("mode=auto_capture_height")
-    print(f"execute_motion={str(args.execute_motion).lower()}")
-    print(f"max_attempts={args.max_attempts}")
+    print("mode=guided_measure_height")
+    if args.hcsr04:
+        print("distance_source=hcsr04")
+    else:
+        print(f"target_distance_cm={args.distance_cm:.1f}")
+    print(f"vertical_fov_deg={args.vertical_fov_deg:.3f}")
+    print(f"camera_pitch_deg={args.camera_pitch_deg:.3f}")
+    print("reference=hcsr04_distance_sensor")
 
     for attempt in range(1, args.max_attempts + 1):
-        image_path = output_dir / f"attempt_{attempt:02d}.jpg"
+        image_path = output_dir / f"guided_{attempt:02d}.jpg"
         capture_one_frame(rtsp_url=args.rtsp_url, output=image_path, jpeg_quality=args.jpeg_quality)
         image = cv2.imread(str(image_path))
         if image is None:
@@ -970,34 +625,39 @@ def auto_capture_height(args: argparse.Namespace) -> None:
         print(f"attempt={attempt}")
         print(f"image={image_path}")
         print(f"detections={len(detections)}")
-        if person is not None:
-            print(f"person_box={asdict(person)}")
-            print(f"person_height_ratio={person.height / float(image_height):.3f}")
         print(f"frame_status={decision.status}")
         print(f"frame_reasons={','.join(decision.reasons) if decision.reasons else 'none'}")
         print(f"guidance={decision.guidance}")
+        print(f"say={prompt_for_guidance(decision.guidance)}")
 
-        if decision.status == "ok":
-            estimate_args = argparse.Namespace(
-                image=str(image_path),
-                distance_cm=args.distance_cm,
-                calibration=args.calibration,
-                yolo_model=args.yolo_model,
-                yolo_confidence=args.yolo_confidence,
-                yolo_nms=args.yolo_nms,
-                yolo_image_size=args.yolo_image_size,
-                person_index=args.person_index,
-                manual_box=None,
+        if decision.status == "ok" and person is not None:
+            distance_cm, distance_source = resolve_distance_cm(args)
+            metrics = estimate_height_from_box_fov(
+                person=person,
+                image_height=image_height,
+                distance_cm=distance_cm,
+                vertical_fov_deg=args.vertical_fov_deg,
+                camera_pitch_deg=args.camera_pitch_deg,
             )
-            estimate_height(estimate_args)
+            result = {
+                "mode": "guided_measure_height",
+                "image": str(image_path),
+                "distance_cm": distance_cm,
+                "distance_source": distance_source,
+                "vertical_fov_deg": args.vertical_fov_deg,
+                "camera_pitch_deg": args.camera_pitch_deg,
+                "person_index": args.person_index,
+                "person_box": asdict(person),
+                **metrics,
+                "detections": [asdict(det) for det in detections],
+            }
+            print(json.dumps(result, indent=2))
             return
 
-        if attempt >= args.max_attempts:
-            break
-        move_for_guidance(args, decision.guidance)
-        time.sleep(args.settle_seconds)
+        if attempt < args.max_attempts:
+            time.sleep(args.settle_seconds)
 
-    print("auto_capture_height=failed")
+    print("guided_measure_height=failed")
     print("reason=could_not_get_reliable_full_body_frame")
 
 
@@ -1012,154 +672,172 @@ def verify_yolo(args: argparse.Namespace) -> None:
     print("yolo_loaded=true")
 
 
-def inspect_grid(args: argparse.Namespace) -> None:
+def inspect_laser(args: argparse.Namespace) -> None:
     cv2, _ = require_cv2_numpy()
     image = cv2.imread(str(args.image))
     if image is None:
         raise RuntimeError(f"OpenCV could not read image: {args.image}")
-    found, points, debug = detect_grid_points(
+    dot, debug = detect_laser_dot(
         image,
-        GridSpec(args.grid_rows, args.grid_cols, args.square_size_cm),
-        blue_hue_low=args.blue_hue_low,
-        blue_hue_high=args.blue_hue_high,
-        min_line_length=args.min_line_length,
+        color=args.laser_color,
+        min_area=args.laser_min_area,
+        max_area=args.laser_max_area,
     )
-    print(f"grid_found={str(found).lower()}")
-    print(f"point_count={0 if points is None else len(points)}")
-    print(json.dumps(debug, indent=2))
+    result = {
+        "image": args.image,
+        "laser_color": args.laser_color,
+        "laser_detected": dot is not None,
+        "laser_dot": None if dot is None else asdict(dot),
+        "debug": debug,
+    }
+    print(json.dumps(result, indent=2))
+
+
+def read_distance(args: argparse.Namespace) -> None:
+    distance_cm, distance_source = resolve_distance_cm(args)
+    print(
+        json.dumps(
+            {
+                "distance_source": distance_source,
+                "distance_cm": distance_cm,
+                "distance_in": distance_cm / 2.54,
+            },
+            indent=2,
+        )
+    )
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
 
-    def add_grid_args(p: argparse.ArgumentParser) -> None:
-        p.add_argument("--grid-rows", type=int, default=12, help="Detected horizontal grid lines/intersections.")
-        p.add_argument("--grid-cols", type=int, default=7, help="Detected vertical grid lines/intersections.")
-        p.add_argument("--square-size-cm", type=float, default=10.0, help="Measured grid square size.")
-        p.add_argument("--blue-hue-low", type=int, default=85)
-        p.add_argument("--blue-hue-high", type=int, default=135)
-        p.add_argument("--min-line-length", type=int, default=80)
+    def add_yolo_args(p: argparse.ArgumentParser) -> None:
+        p.add_argument("--yolo-model", default=DEFAULT_MODEL)
+        p.add_argument("--yolo-confidence", type=float, default=0.35)
+        p.add_argument("--yolo-nms", type=float, default=0.45)
+        p.add_argument("--yolo-image-size", type=int, default=640)
+        p.add_argument("--person-index", type=int, default=0)
 
-    inspect = sub.add_parser("inspect-grid", help="Check whether the grid is detectable in one image.")
-    inspect.add_argument("--image", default="test_camera.jpg")
-    add_grid_args(inspect)
-    inspect.set_defaults(func=inspect_grid)
+    def add_frame_quality_args(p: argparse.ArgumentParser) -> None:
+        p.add_argument("--edge-margin-px", type=float, default=20.0)
+        p.add_argument("--min-person-height-ratio", type=float, default=0.35)
+        p.add_argument("--max-person-height-ratio", type=float, default=0.88)
+        p.add_argument("--center-tolerance-ratio", type=float, default=0.18)
 
-    capture = sub.add_parser("capture-grid", help="Capture many robot-camera grid frames.")
-    capture.add_argument("--rtsp-url", default=DEFAULT_RTSP_URL)
-    capture.add_argument("--output-dir", default="camera_calibration_runs/latest/images")
-    capture.add_argument("--count", type=int, default=1000)
-    capture.add_argument("--interval-sec", type=float, default=0.05)
-    capture.add_argument("--jpeg-quality", type=int, default=92)
-    capture.add_argument("--progress-every", type=int, default=50)
-    add_grid_args(capture)
-    capture.set_defaults(func=capture_frames)
+    def add_camera_pose_args(p: argparse.ArgumentParser) -> None:
+        p.add_argument(
+            "--camera-pitch-deg",
+            type=float,
+            default=0.0,
+            help="Camera tilt for this frame; positive means camera points upward.",
+        )
 
-    laser = sub.add_parser(
-        "capture-laser-samples",
-        help="Capture labeled samples where a laser points into a known grid box.",
-    )
-    laser.add_argument("--rtsp-url", default=DEFAULT_RTSP_URL)
-    laser.add_argument("--output-dir", default="camera_calibration_runs/latest/laser_images")
-    laser.add_argument("--samples", default="camera_calibration_runs/latest/laser_samples.jsonl")
-    laser.add_argument("--count", type=int, default=20)
-    laser.add_argument("--interactive", action="store_true")
-    laser.add_argument("--box-row", type=int, default=None, help="1-based grid box row from top.")
-    laser.add_argument("--box-col", type=int, default=None, help="1-based grid box column from left.")
-    laser.add_argument("--label", default="")
-    laser.add_argument("--jpeg-quality", type=int, default=92)
-    laser.add_argument("--laser-color", choices=["red", "green"], default="red")
-    laser.add_argument("--laser-min-area", type=float, default=3.0)
-    laser.add_argument("--laser-max-area", type=float, default=1800.0)
-    add_grid_args(laser)
-    laser.set_defaults(func=capture_laser_samples)
+    def add_laser_args(p: argparse.ArgumentParser) -> None:
+        p.add_argument("--laser-color", choices=["red", "green"], default="red")
+        p.add_argument("--laser-min-area", type=float, default=3.0)
+        p.add_argument("--laser-max-area", type=float, default=1800.0)
 
-    calibrate = sub.add_parser("calibrate", help="Calibrate camera from captured grid images.")
-    calibrate.add_argument("--image-dir", default="camera_calibration_runs/latest/images")
-    calibrate.add_argument("--output", default="camera_calibration_runs/latest/calibration.json")
-    calibrate.add_argument("--min-accepted", type=int, default=30)
-    add_grid_args(calibrate)
-    calibrate.set_defaults(func=calibrate_from_images)
+    def add_hcsr04_args(p: argparse.ArgumentParser) -> None:
+        p.add_argument("--hcsr04", action="store_true", help="Read distance from Raspberry Pi HC-SR04 GPIO.")
+        p.add_argument("--hcsr04-trigger-pin", type=int, default=DEFAULT_HCSR04_TRIGGER_PIN)
+        p.add_argument("--hcsr04-echo-pin", type=int, default=DEFAULT_HCSR04_ECHO_PIN)
+        p.add_argument("--hcsr04-samples", type=int, default=5)
+        p.add_argument("--hcsr04-sample-delay-sec", type=float, default=0.06)
+        p.add_argument("--hcsr04-max-distance-cm", type=float, default=400.0)
 
-    laser_calibrate = sub.add_parser(
-        "calibrate-laser",
-        help="Calibrate from images where laser dots are labeled by grid box.",
-    )
-    laser_calibrate.add_argument("--samples", default="camera_calibration_runs/latest/laser_samples.jsonl")
-    laser_calibrate.add_argument("--output", default="camera_calibration_runs/latest/calibration.json")
-    laser_calibrate.add_argument("--min-accepted", type=int, default=10)
-    laser_calibrate.add_argument("--fix-principal-point", action="store_true")
-    add_grid_args(laser_calibrate)
-    laser_calibrate.set_defaults(func=calibrate_from_laser_samples)
+    inspect_laser_cmd = sub.add_parser("inspect-laser", help="Check whether a red/green laser dot is visible.")
+    inspect_laser_cmd.add_argument("--image", required=True)
+    add_laser_args(inspect_laser_cmd)
+    inspect_laser_cmd.set_defaults(func=inspect_laser)
 
     verify = sub.add_parser("verify-yolo", help="Verify that the YOLO ONNX model loads.")
     verify.add_argument("--yolo-model", default=DEFAULT_MODEL)
     verify.set_defaults(func=verify_yolo)
 
-    estimate = sub.add_parser("estimate-height", help="Estimate person height from YOLO and radar distance.")
-    estimate.add_argument("--image", required=True)
-    estimate.add_argument("--distance-cm", type=float, required=True, help="Radar distance to person.")
-    estimate.add_argument("--calibration", default="camera_calibration_runs/latest/calibration.json")
-    estimate.add_argument("--yolo-model", default=DEFAULT_MODEL)
-    estimate.add_argument("--yolo-confidence", type=float, default=0.35)
-    estimate.add_argument("--yolo-nms", type=float, default=0.45)
-    estimate.add_argument("--yolo-image-size", type=int, default=640)
-    estimate.add_argument("--person-index", type=int, default=0)
-    estimate.add_argument(
+    distance = sub.add_parser("read-distance", help="Read distance from Raspberry Pi HC-SR04 GPIO.")
+    add_hcsr04_args(distance)
+    distance.set_defaults(hcsr04=True, distance_cm=None, func=read_distance)
+
+    solve_fov = sub.add_parser(
+        "solve-fov",
+        help="Solve camera vertical FOV from one known-height person/object and HC-SR04 distance.",
+    )
+    solve_fov.add_argument("--image", required=True)
+    solve_fov.add_argument("--distance-cm", type=float, default=None, help="Manual test distance in cm.")
+    solve_fov.add_argument("--known-height-cm", type=float, required=True)
+    solve_fov.add_argument(
+        "--manual-box",
+        default=None,
+        help="Fallback reference box as x,y,width,height when YOLO is not ready.",
+    )
+    add_hcsr04_args(solve_fov)
+    add_camera_pose_args(solve_fov)
+    add_yolo_args(solve_fov)
+    solve_fov.set_defaults(func=solve_vertical_fov)
+
+    capture_solve_fov = sub.add_parser(
+        "capture-solve-fov",
+        help="Capture a live reference frame and solve camera vertical FOV with HC-SR04 distance.",
+    )
+    capture_solve_fov.add_argument("--rtsp-url", default=DEFAULT_RTSP_URL)
+    capture_solve_fov.add_argument("--output", default="known_person_capture.jpg")
+    capture_solve_fov.add_argument("--jpeg-quality", type=int, default=92)
+    capture_solve_fov.add_argument("--distance-cm", type=float, default=None, help="Manual test distance in cm.")
+    capture_solve_fov.add_argument("--known-height-cm", type=float, required=True)
+    add_hcsr04_args(capture_solve_fov)
+    add_camera_pose_args(capture_solve_fov)
+    add_yolo_args(capture_solve_fov)
+    capture_solve_fov.set_defaults(func=capture_and_solve_vertical_fov)
+
+    simple_estimate = sub.add_parser(
+        "measure-height",
+        help="Estimate height with YOLO, HC-SR04 distance, and camera vertical FOV.",
+    )
+    simple_estimate.add_argument("--image", required=True)
+    simple_estimate.add_argument("--distance-cm", type=float, default=None, help="Manual test distance in cm.")
+    simple_estimate.add_argument("--vertical-fov-deg", type=float, required=True)
+    simple_estimate.add_argument(
         "--manual-box",
         default=None,
         help="Fallback person box as x,y,width,height when YOLO is not ready.",
     )
-    estimate.set_defaults(func=estimate_height)
+    add_hcsr04_args(simple_estimate)
+    add_camera_pose_args(simple_estimate)
+    add_yolo_args(simple_estimate)
+    add_frame_quality_args(simple_estimate)
+    simple_estimate.set_defaults(func=estimate_height_simple)
 
-    live = sub.add_parser(
-        "capture-height",
-        help="Capture one robot-camera frame, run YOLO, and estimate height from radar distance.",
+    simple_live = sub.add_parser(
+        "capture-measure-height",
+        help="Capture one robot-camera frame and estimate height from HC-SR04 distance and vertical FOV.",
     )
-    live.add_argument("--rtsp-url", default=DEFAULT_RTSP_URL)
-    live.add_argument("--output", default="person_capture.jpg")
-    live.add_argument("--jpeg-quality", type=int, default=92)
-    live.add_argument("--distance-cm", type=float, required=True, help="Radar distance to person.")
-    live.add_argument("--calibration", default="camera_calibration_runs/latest/calibration.json")
-    live.add_argument("--yolo-model", default=DEFAULT_MODEL)
-    live.add_argument("--yolo-confidence", type=float, default=0.35)
-    live.add_argument("--yolo-nms", type=float, default=0.45)
-    live.add_argument("--yolo-image-size", type=int, default=640)
-    live.add_argument("--person-index", type=int, default=0)
-    live.set_defaults(func=capture_and_estimate_height)
+    simple_live.add_argument("--rtsp-url", default=DEFAULT_RTSP_URL)
+    simple_live.add_argument("--output", default="person_capture.jpg")
+    simple_live.add_argument("--jpeg-quality", type=int, default=92)
+    simple_live.add_argument("--distance-cm", type=float, default=None, help="Manual test distance in cm.")
+    simple_live.add_argument("--vertical-fov-deg", type=float, required=True)
+    add_hcsr04_args(simple_live)
+    add_camera_pose_args(simple_live)
+    add_yolo_args(simple_live)
+    add_frame_quality_args(simple_live)
+    simple_live.set_defaults(func=capture_and_estimate_height_simple)
 
-    auto = sub.add_parser(
-        "auto-capture-height",
-        help=(
-            "Retry dog-camera captures until the person is fully framed; "
-            "optionally move the dog using raw zsibot, not sess.motion."
-        ),
+    guided = sub.add_parser(
+        "guided-measure-height",
+        help="Guide a person into frame, then estimate height from HC-SR04 distance.",
     )
-    auto.add_argument("--rtsp-url", default=DEFAULT_RTSP_URL)
-    auto.add_argument("--output-dir", default="person_framing_runs/latest")
-    auto.add_argument("--jpeg-quality", type=int, default=92)
-    auto.add_argument("--distance-cm", type=float, required=True, help="Radar distance to person.")
-    auto.add_argument("--calibration", default="camera_calibration_runs/latest/calibration.json")
-    auto.add_argument("--yolo-model", default=DEFAULT_MODEL)
-    auto.add_argument("--yolo-confidence", type=float, default=0.35)
-    auto.add_argument("--yolo-nms", type=float, default=0.45)
-    auto.add_argument("--yolo-image-size", type=int, default=640)
-    auto.add_argument("--person-index", type=int, default=0)
-    auto.add_argument("--max-attempts", type=int, default=5)
-    auto.add_argument("--edge-margin-px", type=float, default=20.0)
-    auto.add_argument("--min-person-height-ratio", type=float, default=0.35)
-    auto.add_argument("--max-person-height-ratio", type=float, default=0.88)
-    auto.add_argument("--center-tolerance-ratio", type=float, default=0.18)
-    auto.add_argument("--settle-seconds", type=float, default=0.8)
-    auto.add_argument("--execute-motion", action="store_true")
-    auto.add_argument("--robot-host", default="192.168.234.1")
-    auto.add_argument("--variant", default="zsl-1")
-    auto.add_argument("--local-port", type=int, default=43988)
-    auto.add_argument("--nudge-speed-mps", type=float, default=0.12)
-    auto.add_argument("--lateral-speed-mps", type=float, default=0.08)
-    auto.add_argument("--nudge-seconds", type=float, default=0.7)
-    auto.set_defaults(func=auto_capture_height)
+    guided.add_argument("--rtsp-url", default=DEFAULT_RTSP_URL)
+    guided.add_argument("--output-dir", default="person_measure_runs/latest")
+    guided.add_argument("--jpeg-quality", type=int, default=92)
+    guided.add_argument("--distance-cm", type=float, default=None, help="Manual test distance in cm.")
+    guided.add_argument("--vertical-fov-deg", type=float, required=True)
+    guided.add_argument("--max-attempts", type=int, default=8)
+    guided.add_argument("--settle-seconds", type=float, default=1.5)
+    add_hcsr04_args(guided)
+    add_camera_pose_args(guided)
+    add_yolo_args(guided)
+    add_frame_quality_args(guided)
+    guided.set_defaults(func=guided_measure_height)
     return parser
 
 
