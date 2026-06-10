@@ -31,8 +31,8 @@ Measure the real grid square size first. Then run:
 ```bash
 python3 examples/vision/height_calculator.py inspect-grid \
   --image test_camera.jpg \
-  --grid-rows 8 \
-  --grid-cols 8 \
+  --grid-rows 12 \
+  --grid-cols 7 \
   --square-size-cm 10
 ```
 
@@ -52,8 +52,8 @@ Run this on the robot while the grid is visible from many angles and distances:
 python3 examples/vision/height_calculator.py capture-grid \
   --count 1000 \
   --interval-sec 0.05 \
-  --grid-rows 8 \
-  --grid-cols 8 \
+  --grid-rows 12 \
+  --grid-cols 7 \
   --square-size-cm 10
 ```
 
@@ -63,7 +63,7 @@ Move the robot/camera so the grid appears in different parts of the image. A tho
 
 This is the assisted calibration mode you described: a person points a laser into one grid box, and you tell the script which box it is in.
 
-Boxes are numbered from the top-left, starting at `1,1`. If the detected grid has `8` vertical intersections and `8` horizontal intersections, it has `7 x 7` boxes.
+Boxes are numbered from the top-left, starting at `1,1`. With `7` vertical lines and `12` horizontal lines, the grid has `6 x 11` boxes.
 
 Interactive mode:
 
@@ -71,8 +71,8 @@ Interactive mode:
 python3 examples/vision/height_calculator.py capture-laser-samples \
   --interactive \
   --count 100 \
-  --grid-rows 8 \
-  --grid-cols 8 \
+  --grid-rows 12 \
+  --grid-cols 7 \
   --square-size-cm 10
 ```
 
@@ -95,8 +95,8 @@ python3 examples/vision/height_calculator.py capture-laser-samples \
   --count 10 \
   --box-row 3 \
   --box-col 5 \
-  --grid-rows 8 \
-  --grid-cols 8 \
+  --grid-rows 12 \
+  --grid-cols 7 \
   --square-size-cm 10
 ```
 
@@ -113,8 +113,8 @@ python3 examples/vision/height_calculator.py calibrate \
   --image-dir camera_calibration_runs/latest/images \
   --output camera_calibration_runs/latest/calibration.json \
   --min-accepted 30 \
-  --grid-rows 8 \
-  --grid-cols 8 \
+  --grid-rows 12 \
+  --grid-cols 7 \
   --square-size-cm 10
 ```
 
@@ -127,8 +127,8 @@ python3 examples/vision/height_calculator.py calibrate-laser \
   --samples camera_calibration_runs/latest/laser_samples.jsonl \
   --output camera_calibration_runs/latest/calibration.json \
   --min-accepted 10 \
-  --grid-rows 8 \
-  --grid-cols 8 \
+  --grid-rows 12 \
+  --grid-cols 7 \
   --square-size-cm 10
 ```
 

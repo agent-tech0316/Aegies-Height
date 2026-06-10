@@ -20,6 +20,7 @@ should provide the distance from the robot camera plane to the person.
 from __future__ import annotations
 
 import argparse
+import itertools
 import json
 import math
 import time
@@ -214,6 +215,30 @@ def group_close_values(values: list[float], tolerance: float) -> list[float]:
     return [sum(group) / len(group) for group in grouped]
 
 
+def choose_evenly_spaced_lines(lines: list[float], expected_count: int) -> list[float]:
+    """Choose the most grid-like subset when Hough finds duplicate tape fragments."""
+
+    lines = sorted(lines)
+    if len(lines) <= expected_count:
+        return lines
+
+    best_subset: tuple[float, ...] | None = None
+    best_score: float | None = None
+    for subset in itertools.combinations(lines, expected_count):
+        gaps = [subset[index + 1] - subset[index] for index in range(len(subset) - 1)]
+        if not gaps or min(gaps) <= 0:
+            continue
+        mean_gap = sum(gaps) / len(gaps)
+        spacing_error = sum((gap - mean_gap) ** 2 for gap in gaps) / len(gaps)
+        span_bonus = (subset[-1] - subset[0]) * 0.01
+        score = spacing_error - span_bonus
+        if best_score is None or score < best_score:
+            best_score = score
+            best_subset = subset
+
+    return list(best_subset or lines[:expected_count])
+
+
 def detect_grid_points(
     image,
     spec: GridSpec,
@@ -265,23 +290,32 @@ def detect_grid_points(
     x_lines = group_close_values(vertical_x, tolerance=22.0)
     y_lines = group_close_values(horizontal_y, tolerance=22.0)
 
+    raw_vertical_count = len(x_lines)
+    raw_horizontal_count = len(y_lines)
+
     if len(x_lines) < spec.cols or len(y_lines) < spec.rows:
         return (
             False,
             None,
             {
                 "reason": "not_enough_grid_lines",
-                "vertical_lines": len(x_lines),
-                "horizontal_lines": len(y_lines),
+                "vertical_lines": raw_vertical_count,
+                "horizontal_lines": raw_horizontal_count,
+                "needed_vertical_lines": spec.cols,
+                "needed_horizontal_lines": spec.rows,
             },
         )
 
-    x_lines = sorted(x_lines)[: spec.cols]
-    y_lines = sorted(y_lines)[: spec.rows]
+    x_lines = choose_evenly_spaced_lines(x_lines, spec.cols)
+    y_lines = choose_evenly_spaced_lines(y_lines, spec.rows)
     points = np.array([[x, y] for y in y_lines for x in x_lines], dtype=np.float32)
     return True, points.reshape(-1, 1, 2), {
         "vertical_lines": len(x_lines),
         "horizontal_lines": len(y_lines),
+        "raw_vertical_lines": raw_vertical_count,
+        "raw_horizontal_lines": raw_horizontal_count,
+        "selected_x_lines": [round(value, 2) for value in x_lines],
+        "selected_y_lines": [round(value, 2) for value in y_lines],
     }
 
 
@@ -1000,8 +1034,8 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
 
     def add_grid_args(p: argparse.ArgumentParser) -> None:
-        p.add_argument("--grid-rows", type=int, default=8, help="Detected horizontal grid intersections.")
-        p.add_argument("--grid-cols", type=int, default=8, help="Detected vertical grid intersections.")
+        p.add_argument("--grid-rows", type=int, default=12, help="Detected horizontal grid lines/intersections.")
+        p.add_argument("--grid-cols", type=int, default=7, help="Detected vertical grid lines/intersections.")
         p.add_argument("--square-size-cm", type=float, default=10.0, help="Measured grid square size.")
         p.add_argument("--blue-hue-low", type=int, default=85)
         p.add_argument("--blue-hue-high", type=int, default=135)
