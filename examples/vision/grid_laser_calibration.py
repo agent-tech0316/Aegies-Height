@@ -1112,6 +1112,11 @@ def capture_laser_samples(args: argparse.Namespace) -> None:
     print("top_extension_labels_are=Trow,col_like_T1,1")
     roi = parse_roi(args.roi)
     grid_reference = load_grid_reference(args.grid_reference)
+    if grid_reference is None and not args.allow_dark_grid_detection:
+        raise RuntimeError(
+            "capture-laser-samples now requires --grid-reference. "
+            "Use the lights-on grid_reference.json so dark laser frames cannot create new columns."
+        )
     if grid_reference is not None:
         print(f"grid_reference={Path(args.grid_reference).resolve()}")
         if roi is None:
@@ -1537,6 +1542,11 @@ def calibrate_from_laser_samples(args: argparse.Namespace) -> None:
     if not samples:
         raise RuntimeError(f"No laser samples found: {args.samples}")
     cli_grid_reference = load_grid_reference(args.grid_reference)
+    if cli_grid_reference is None:
+        raise RuntimeError(
+            "calibrate-laser requires --grid-reference. "
+            "Use the lights-on grid_reference.json; sample images must not redetect grid columns."
+        )
 
     base_object_points = object_points(spec).reshape(-1, 3)
     object_sets = []
@@ -1553,31 +1563,8 @@ def calibrate_from_laser_samples(args: argparse.Namespace) -> None:
             continue
         height, width = image.shape[:2]
         image_size = (width, height)
-        sample_reference = (
-            load_grid_reference(str(resolve_sample_path(str(sample["grid_reference"]), samples_path)))
-            if sample.get("grid_reference")
-            else None
-        )
-        # The lights-on reference passed on the command line is the source of truth.
-        # Per-sample paths are only a fallback for older runs without --grid-reference.
-        grid_reference = cli_grid_reference or sample_reference
-        if grid_reference is not None:
-            grid_points = grid_reference["grid_points"]
-            grid_debug = grid_reference["grid_debug"]
-        else:
-            found, grid_points, grid_debug = detect_grid_points(
-                image,
-                spec,
-                blue_hue_low=args.blue_hue_low,
-                blue_hue_high=args.blue_hue_high,
-                min_line_length=args.min_line_length,
-                hough_threshold=args.hough_threshold,
-                skip_left_x_lines=args.skip_left_x_lines,
-                roi=parse_roi(args.roi),
-            )
-            if not found or grid_points is None:
-                rejected.append({"image": str(image_path), **grid_debug})
-                continue
+        grid_points = cli_grid_reference["grid_points"]
+        grid_debug = cli_grid_reference["grid_debug"]
         laser_dot = sample.get("laser_dot")
         if not isinstance(laser_dot, dict):
             rejected.append({"image": str(image_path), "reason": "laser_dot_missing"})
@@ -1761,6 +1748,11 @@ def build_parser() -> argparse.ArgumentParser:
     laser.add_argument("--output-dir", default="camera_calibration_runs/latest/laser_images")
     laser.add_argument("--samples", default="camera_calibration_runs/latest/laser_samples.jsonl")
     laser.add_argument("--grid-reference", default=None)
+    laser.add_argument(
+        "--allow-dark-grid-detection",
+        action="store_true",
+        help="Allow grid detection from each laser frame when no lights-on grid reference is provided.",
+    )
     laser.add_argument("--count", type=int, default=50)
     laser.add_argument("--interactive", action="store_true")
     laser.add_argument("--box-region", choices=["lower", "top_extension"], default="lower")
