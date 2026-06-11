@@ -458,6 +458,40 @@ def parse_roi(raw: str | None) -> tuple[int, int, int, int] | None:
     return x, y, width, height
 
 
+def clamp_roi_to_image(
+    roi: tuple[int, int, int, int],
+    *,
+    image_width: int,
+    image_height: int,
+) -> tuple[int, int, int, int]:
+    x, y, width, height = roi
+    left = max(0, min(image_width - 1, x))
+    top = max(0, min(image_height - 1, y))
+    right = max(left + 1, min(image_width, x + width))
+    bottom = max(top + 1, min(image_height, y + height))
+    return left, top, right - left, bottom - top
+
+
+def roi_from_grid_points(
+    grid_points,
+    *,
+    image_width: int,
+    image_height: int,
+    padding_px: int = 20,
+) -> tuple[int, int, int, int]:
+    _, np = require_cv2_numpy()
+    points = np.asarray(grid_points, dtype=np.float32).reshape(-1, 2)
+    min_x = int(math.floor(float(points[:, 0].min()))) - padding_px
+    max_x = int(math.ceil(float(points[:, 0].max()))) + padding_px
+    min_y = int(math.floor(float(points[:, 1].min()))) - padding_px
+    max_y = int(math.ceil(float(points[:, 1].max()))) + padding_px
+    return clamp_roi_to_image(
+        (min_x, min_y, max_x - min_x, max_y - min_y),
+        image_width=image_width,
+        image_height=image_height,
+    )
+
+
 def dot_inside_labeled_box(
     *,
     spec: GridSpec,
@@ -755,11 +789,15 @@ def detect_laser_dot(
         mask2 = cv2.inRange(hsv, np.array([162, min_saturation, min_value]), np.array([179, 255, 255]))
         mask = cv2.bitwise_or(mask1, mask2)
     elif color == "green":
-        hsv_mask = cv2.inRange(hsv, np.array([35, min_saturation, min_value]), np.array([95, 255, 255]))
+        # The real laser often appears cyan/blue-green on the dog camera sensor,
+        # so accept green through cyan hues while still rejecting white/gray glare
+        # by requiring saturation and color dominance over red.
+        hsv_mask = cv2.inRange(hsv, np.array([35, min_saturation, min_value]), np.array([110, 255, 255]))
         blue, green, red = cv2.split(working)
-        green_dominance = green.astype(np.int16) - np.maximum(red, blue).astype(np.int16)
-        dominance_mask = cv2.inRange(green_dominance, int(min_green_dominance), 255)
-        bright_mask = cv2.inRange(green, int(min_value), 255)
+        cyan_green = np.maximum(green, blue).astype(np.int16)
+        red_rejection = cyan_green - red.astype(np.int16)
+        dominance_mask = cv2.inRange(red_rejection, int(min_green_dominance), 255)
+        bright_mask = cv2.inRange(cyan_green.astype(np.uint8), int(min_value), 255)
         mask = cv2.bitwise_and(hsv_mask, cv2.bitwise_and(dominance_mask, bright_mask))
     else:
         raise ValueError("laser color must be red or green")
@@ -803,6 +841,7 @@ def detect_laser_dot(
 def inspect_laser(args: argparse.Namespace) -> None:
     cv2, _ = require_cv2_numpy()
     image_path = Path(args.output)
+    grid_reference = load_grid_reference(args.grid_reference)
     if args.image:
         source_path = Path(args.image)
         image = cv2.imread(str(source_path))
@@ -824,18 +863,30 @@ def inspect_laser(args: argparse.Namespace) -> None:
         if image is None:
             raise RuntimeError(f"OpenCV could not read captured image: {image_path}")
 
+    height, width = image.shape[:2]
+    requested_roi = parse_roi(args.roi)
+    laser_roi = requested_roi
+    if laser_roi is None and grid_reference is not None:
+        laser_roi = roi_from_grid_points(
+            grid_reference["grid_points"],
+            image_width=width,
+            image_height=height,
+            padding_px=args.wall_padding_px,
+        )
+        print(f"wall_roi_from_grid_reference={laser_roi}")
+
     dot, debug = detect_laser_dot(
         image,
         color=args.laser_color,
         min_area=args.laser_min_area,
         max_area=args.laser_max_area,
-        roi=parse_roi(args.roi),
+        roi=laser_roi,
         min_saturation=args.laser_min_saturation,
         min_value=args.laser_min_value,
         min_green_dominance=args.laser_min_green_dominance,
     )
     overlay = image.copy()
-    roi = parse_roi(args.roi)
+    roi = laser_roi
     if roi is not None:
         x, y, width, height = roi
         cv2.rectangle(overlay, (x, y), (x + width, y + height), (255, 255, 0), 2)
@@ -964,6 +1015,14 @@ def capture_laser_samples(args: argparse.Namespace) -> None:
     grid_reference = load_grid_reference(args.grid_reference)
     if grid_reference is not None:
         print(f"grid_reference={Path(args.grid_reference).resolve()}")
+        if roi is None:
+            roi = roi_from_grid_points(
+                grid_reference["grid_points"],
+                image_width=grid_reference["image_width"],
+                image_height=grid_reference["image_height"],
+                padding_px=args.wall_padding_px,
+            )
+            print(f"wall_roi_from_grid_reference={roi}")
 
     accepted_count = 0
     attempt = 0
@@ -1421,8 +1480,14 @@ def build_parser() -> argparse.ArgumentParser:
         p.add_argument("--laser-min-area", type=float, default=1.0)
         p.add_argument("--laser-max-area", type=float, default=1800.0)
         p.add_argument("--laser-min-saturation", type=int, default=35)
-        p.add_argument("--laser-min-value", type=int, default=45)
+        p.add_argument("--laser-min-value", type=int, default=120)
         p.add_argument("--laser-min-green-dominance", type=int, default=25)
+        p.add_argument(
+            "--wall-padding-px",
+            type=int,
+            default=20,
+            help="Padding around grid-reference points when using the grid as the wall-only laser ROI.",
+        )
 
     inspect = sub.add_parser("inspect-grid", help="Check grid detection in one image.")
     inspect.add_argument("--image", default="test_camera.jpg")
@@ -1438,6 +1503,7 @@ def build_parser() -> argparse.ArgumentParser:
     inspect_laser_cmd.add_argument("--capture-timeout-sec", type=float, default=6.0)
     inspect_laser_cmd.add_argument("--jpeg-quality", type=int, default=92)
     inspect_laser_cmd.add_argument("--roi", default=None)
+    inspect_laser_cmd.add_argument("--grid-reference", default=None)
     add_laser_args(inspect_laser_cmd)
     inspect_laser_cmd.set_defaults(func=inspect_laser)
 
