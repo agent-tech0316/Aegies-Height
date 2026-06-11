@@ -332,6 +332,16 @@ grid_reference_saved=...
 grid_found=true point_count=84
 ```
 
+If the command hangs while reading the camera, use an already captured image:
+
+```bash
+python3 examples/vision/grid_laser_calibration.py capture-grid-reference \
+  --image test_camera.jpg \
+  --output camera_calibration_runs/latest/grid_reference.json \
+  --image-output camera_calibration_runs/latest/grid_reference.jpg \
+  --min-line-length 25
+```
+
 Then turn the lights off, point the green laser into a box, and start dark
 laser capture:
 

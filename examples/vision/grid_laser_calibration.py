@@ -619,7 +619,24 @@ def capture_grid_reference(args: argparse.Namespace) -> None:
     spec = make_grid_spec(args)
     image_path = Path(args.image_output)
     output_path = Path(args.output)
-    capture_one_frame(rtsp_url=args.rtsp_url, output=image_path, jpeg_quality=args.jpeg_quality)
+    if args.image:
+        source_path = Path(args.image)
+        image = cv2.imread(str(source_path))
+        if image is None:
+            raise RuntimeError(f"OpenCV could not read image: {source_path}")
+        image_path.parent.mkdir(parents=True, exist_ok=True)
+        write_image_or_raise(image_path, image, args.jpeg_quality)
+        print(f"grid_reference_source_image={source_path.resolve()}", flush=True)
+    else:
+        log_step("grid_reference_open_camera")
+        cap = open_camera(args.rtsp_url)
+        try:
+            log_step("grid_reference_read_camera")
+            cap, image = read_camera_frame(cap, reconnect_url=args.rtsp_url)
+            log_step("grid_reference_frame_read")
+            write_image_or_raise(image_path, image, args.jpeg_quality)
+        finally:
+            cap.release()
     image = cv2.imread(str(image_path))
     if image is None:
         raise RuntimeError(f"OpenCV could not read captured image: {image_path}")
@@ -1331,6 +1348,7 @@ def build_parser() -> argparse.ArgumentParser:
     reference = sub.add_parser("capture-grid-reference", help="Capture one lights-on grid reference for dark laser samples.")
     reference.add_argument("--rtsp-url", default=DEFAULT_RTSP_URL)
     reference.add_argument("--output", default="camera_calibration_runs/latest/grid_reference.json")
+    reference.add_argument("--image", default=None, help="Use an existing grid image instead of capturing from RTSP.")
     reference.add_argument("--image-output", default="camera_calibration_runs/latest/grid_reference.jpg")
     reference.add_argument("--jpeg-quality", type=int, default=92)
     add_grid_args(reference)
