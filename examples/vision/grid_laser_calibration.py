@@ -120,6 +120,21 @@ def capture_one_frame(*, rtsp_url: str, output: Path, jpeg_quality: int) -> Path
     return output
 
 
+def read_camera_frame(cap, *, reconnect_url: str | None = None):
+    ok, frame = cap.read()
+    if ok and frame is not None:
+        return cap, frame
+    if reconnect_url is None:
+        raise RuntimeError("Could not read a frame from camera.")
+    cap.release()
+    time.sleep(0.25)
+    cap = open_camera(reconnect_url)
+    ok, frame = cap.read()
+    if not ok or frame is None:
+        raise RuntimeError(f"Could not read a frame from dog camera: {reconnect_url}")
+    return cap, frame
+
+
 def group_close_values(values: list[float], tolerance: float) -> list[float]:
     if not values:
         return []
@@ -580,6 +595,8 @@ def capture_laser_samples(args: argparse.Namespace) -> None:
     output_dir = Path(args.output_dir)
     samples_path = Path(args.samples)
     output_dir.mkdir(parents=True, exist_ok=True)
+    preview_path = Path(args.preview)
+    preview_path.parent.mkdir(parents=True, exist_ok=True)
     print(f"laser_samples={samples_path}")
     print(f"grid_shape={spec.shape}")
     print(f"lower_grid_boxes={spec.box_rows}x{spec.box_cols}")
@@ -594,91 +611,96 @@ def capture_laser_samples(args: argparse.Namespace) -> None:
 
     accepted_count = 0
     attempt = 0
-    while accepted_count < args.count:
-        attempt += 1
-        if args.interactive:
-            raw = input(f"sample {accepted_count + 1}/{args.count} box row,col (or q)> ").strip().lower()
-            if raw in {"q", "quit", "exit"}:
-                break
-            region, row, col = parse_box_label(raw)
-        else:
-            if args.box_row is None or args.box_col is None:
-                raise RuntimeError("Use --interactive or provide --box-row and --box-col.")
-            region, row, col = args.box_region, args.box_row, args.box_col
+    cap = open_camera(args.rtsp_url)
+    print(f"camera_stream=open preview={preview_path}")
+    try:
+        while accepted_count < args.count:
+            attempt += 1
+            if args.interactive:
+                raw = input(f"sample {accepted_count + 1}/{args.count} box row,col (or q)> ").strip().lower()
+                if raw in {"q", "quit", "exit"}:
+                    break
+                region, row, col = parse_box_label(raw)
+            else:
+                if args.box_row is None or args.box_col is None:
+                    raise RuntimeError("Use --interactive or provide --box-row and --box-col.")
+                region, row, col = args.box_region, args.box_row, args.box_col
 
-        grid_box_center_object_point(spec=spec, row=row, col=col, region=region)
-        image_path = output_dir / f"laser_{int(time.time())}_{attempt:04d}.jpg"
-        capture_one_frame(rtsp_url=args.rtsp_url, output=image_path, jpeg_quality=args.jpeg_quality)
-        image = cv2.imread(str(image_path))
-        if image is None:
-            raise RuntimeError(f"OpenCV could not read captured image: {image_path}")
-        dot, laser_debug = detect_laser_dot(
-            image,
-            color=args.laser_color,
-            min_area=args.laser_min_area,
-            max_area=args.laser_max_area,
-        )
-        grid_found, grid_points, grid_debug = detect_grid_points(
-            image,
-            spec,
-            blue_hue_low=args.blue_hue_low,
-            blue_hue_high=args.blue_hue_high,
-            min_line_length=args.min_line_length,
-            roi=parse_roi(args.roi),
-        )
-        box_check = {"box_check": "unknown", "reason": "laser_or_grid_missing"}
-        sample_accepted = False
-        if dot is not None and grid_found:
-            box_check = dot_inside_labeled_box(
-                spec=spec,
-                grid_debug=grid_debug,
-                dot=dot,
-                region=region,
-                row=row,
-                col=col,
-                margin_px=args.box_margin_px,
+            grid_box_center_object_point(spec=spec, row=row, col=col, region=region)
+            image_path = output_dir / f"laser_{int(time.time())}_{attempt:04d}.jpg"
+            cap, image = read_camera_frame(cap, reconnect_url=args.rtsp_url)
+            cv2.imwrite(str(preview_path), image, [int(cv2.IMWRITE_JPEG_QUALITY), args.jpeg_quality])
+            cv2.imwrite(str(image_path), image, [int(cv2.IMWRITE_JPEG_QUALITY), args.jpeg_quality])
+            dot, laser_debug = detect_laser_dot(
+                image,
+                color=args.laser_color,
+                min_area=args.laser_min_area,
+                max_area=args.laser_max_area,
             )
-            sample_accepted = box_check.get("box_check") == "inside"
-        sample = {
-            "created_at": datetime.now().isoformat(timespec="seconds"),
-            "image": str(image_path),
-            "box_region": region,
-            "box_row": row,
-            "box_col": col,
-            "box_label": format_box_label(region, row, col),
-            "box_origin": "top_left",
-            "grid": spec.as_dict(),
-            "laser_color": args.laser_color,
-            "laser_detected": dot is not None,
-            "laser_dot": None if dot is None else asdict(dot),
-            "grid_found": grid_found,
-            "grid_point_count": 0 if grid_points is None else int(len(grid_points)),
-            "laser_debug": laser_debug,
-            "grid_debug": grid_debug,
-            "box_check": box_check,
-            "sample_accepted": sample_accepted,
-            "label": args.label,
-        }
-        status = "accepted" if sample_accepted else "rejected"
-        if sample_accepted or args.save_rejected:
-            append_jsonl(samples_path, sample)
-            print(
-                f"sample_{status}={image_path} box={format_box_label(region, row, col)} "
-                f"accepted_count={accepted_count + int(sample_accepted)}/{args.count} "
-                f"laser_detected={str(dot is not None).lower()} grid_found={str(grid_found).lower()} "
-                f"box_check={box_check.get('box_check')} {box_check_summary(box_check)}"
+            grid_found, grid_points, grid_debug = detect_grid_points(
+                image,
+                spec,
+                blue_hue_low=args.blue_hue_low,
+                blue_hue_high=args.blue_hue_high,
+                min_line_length=args.min_line_length,
+                roi=parse_roi(args.roi),
             )
-        else:
-            image_path.unlink(missing_ok=True)
-            print(
-                f"sample_rejected=not_saved box={format_box_label(region, row, col)} "
-                f"accepted_count={accepted_count}/{args.count} "
-                f"laser_detected={str(dot is not None).lower()} grid_found={str(grid_found).lower()} "
-                f"box_check={box_check.get('box_check')} {box_check_summary(box_check)} "
-                f"grid_reason={grid_debug.get('reason', 'none')}"
-            )
-        if sample_accepted:
-            accepted_count += 1
+            box_check = {"box_check": "unknown", "reason": "laser_or_grid_missing"}
+            sample_accepted = False
+            if dot is not None and grid_found:
+                box_check = dot_inside_labeled_box(
+                    spec=spec,
+                    grid_debug=grid_debug,
+                    dot=dot,
+                    region=region,
+                    row=row,
+                    col=col,
+                    margin_px=args.box_margin_px,
+                )
+                sample_accepted = box_check.get("box_check") == "inside"
+            sample = {
+                "created_at": datetime.now().isoformat(timespec="seconds"),
+                "image": str(image_path),
+                "preview": str(preview_path),
+                "box_region": region,
+                "box_row": row,
+                "box_col": col,
+                "box_label": format_box_label(region, row, col),
+                "box_origin": "top_left",
+                "grid": spec.as_dict(),
+                "laser_color": args.laser_color,
+                "laser_detected": dot is not None,
+                "laser_dot": None if dot is None else asdict(dot),
+                "grid_found": grid_found,
+                "grid_point_count": 0 if grid_points is None else int(len(grid_points)),
+                "laser_debug": laser_debug,
+                "grid_debug": grid_debug,
+                "box_check": box_check,
+                "sample_accepted": sample_accepted,
+                "label": args.label,
+            }
+            status = "accepted" if sample_accepted else "rejected"
+            if sample_accepted or args.save_rejected:
+                append_jsonl(samples_path, sample)
+                print(
+                    f"sample_{status}={image_path} preview={preview_path} box={format_box_label(region, row, col)} "
+                    f"accepted_count={accepted_count + int(sample_accepted)}/{args.count} "
+                    f"laser_detected={str(dot is not None).lower()} grid_found={str(grid_found).lower()} "
+                    f"box_check={box_check.get('box_check')} {box_check_summary(box_check)}"
+                )
+            else:
+                image_path.unlink(missing_ok=True)
+                print(
+                    f"sample_rejected=not_saved preview={preview_path} box={format_box_label(region, row, col)} "
+                    f"accepted_count={accepted_count}/{args.count} "
+                    f"laser_detected={str(dot is not None).lower()} grid_found={str(grid_found).lower()} "
+                    f"box_check={box_check.get('box_check')} {box_check_summary(box_check)} "
+                    f"grid_reason={grid_debug.get('reason', 'none')}"
+                )
+            if sample_accepted:
+                accepted_count += 1
+    finally:
+        cap.release()
 
 
 def calibrate_from_images(args: argparse.Namespace) -> None:
@@ -939,6 +961,7 @@ def build_parser() -> argparse.ArgumentParser:
     laser.add_argument("--label", default="")
     laser.add_argument("--save-rejected", action="store_true")
     laser.add_argument("--box-margin-px", type=float, default=12.0)
+    laser.add_argument("--preview", default="camera_calibration_runs/latest/latest_laser_attempt.jpg")
     laser.add_argument("--jpeg-quality", type=int, default=92)
     add_laser_args(laser)
     add_grid_args(laser)
