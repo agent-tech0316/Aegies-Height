@@ -13,6 +13,7 @@ import os
 import time
 from dataclasses import asdict, dataclass
 from datetime import datetime
+from multiprocessing import Process, Queue
 from pathlib import Path
 
 
@@ -142,6 +143,41 @@ def capture_one_frame(*, rtsp_url: str, output: Path, jpeg_quality: int) -> Path
         cv2.imwrite(str(output), frame, [int(cv2.IMWRITE_JPEG_QUALITY), jpeg_quality])
     finally:
         cap.release()
+    return output
+
+
+def _capture_one_frame_worker(rtsp_url: str, output: str, jpeg_quality: int, queue) -> None:
+    try:
+        capture_one_frame(rtsp_url=rtsp_url, output=Path(output), jpeg_quality=jpeg_quality)
+        queue.put({"ok": True})
+    except Exception as exc:
+        queue.put({"ok": False, "error": str(exc)})
+
+
+def capture_one_frame_with_timeout(
+    *,
+    rtsp_url: str,
+    output: Path,
+    jpeg_quality: int,
+    timeout_sec: float,
+) -> Path:
+    output.parent.mkdir(parents=True, exist_ok=True)
+    queue = Queue()
+    process = Process(
+        target=_capture_one_frame_worker,
+        args=(rtsp_url, str(output), jpeg_quality, queue),
+    )
+    process.start()
+    process.join(timeout=max(0.5, timeout_sec))
+    if process.is_alive():
+        process.terminate()
+        process.join(1.0)
+        raise RuntimeError(f"Timed out reading dog camera after {timeout_sec:.1f}s: {rtsp_url}")
+    result = queue.get() if not queue.empty() else {"ok": False, "error": "capture worker exited without result"}
+    if not result.get("ok"):
+        raise RuntimeError(str(result.get("error", "camera capture failed")))
+    if not output.exists():
+        raise RuntimeError(f"Camera capture did not create image: {output}")
     return output
 
 
@@ -774,18 +810,19 @@ def inspect_laser(args: argparse.Namespace) -> None:
             raise RuntimeError(f"OpenCV could not read image: {source_path}")
         write_image_or_raise(image_path, image, args.jpeg_quality)
     else:
-        log_step("inspect_laser_open_camera")
-        cap = open_camera(args.rtsp_url)
-        try:
-            if args.warmup_frames > 0:
-                log_step(f"inspect_laser_warmup_frames={args.warmup_frames}")
-                cap = flush_camera_frames(cap, args.warmup_frames, reconnect_url=args.rtsp_url)
-            log_step("inspect_laser_read_camera")
-            cap, image = read_camera_frame(cap, reconnect_url=args.rtsp_url)
-            log_step("inspect_laser_frame_read")
-            write_image_or_raise(image_path, image, args.jpeg_quality)
-        finally:
-            cap.release()
+        if args.warmup_frames > 0:
+            log_step("inspect_laser_warmup_disabled_for_timeout_capture")
+        log_step(f"inspect_laser_capture_timeout_sec={args.capture_timeout_sec}")
+        capture_one_frame_with_timeout(
+            rtsp_url=args.rtsp_url,
+            output=image_path,
+            jpeg_quality=args.jpeg_quality,
+            timeout_sec=args.capture_timeout_sec,
+        )
+        log_step("inspect_laser_frame_read")
+        image = cv2.imread(str(image_path))
+        if image is None:
+            raise RuntimeError(f"OpenCV could not read captured image: {image_path}")
 
     dot, debug = detect_laser_dot(
         image,
@@ -1398,6 +1435,7 @@ def build_parser() -> argparse.ArgumentParser:
     inspect_laser_cmd.add_argument("--output", default="camera_calibration_runs/latest/laser_test.jpg")
     inspect_laser_cmd.add_argument("--debug-output", default="camera_calibration_runs/latest/laser_test_debug.jpg")
     inspect_laser_cmd.add_argument("--warmup-frames", type=int, default=0)
+    inspect_laser_cmd.add_argument("--capture-timeout-sec", type=float, default=6.0)
     inspect_laser_cmd.add_argument("--jpeg-quality", type=int, default=92)
     inspect_laser_cmd.add_argument("--roi", default=None)
     add_laser_args(inspect_laser_cmd)
