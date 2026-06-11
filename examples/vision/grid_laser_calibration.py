@@ -106,6 +106,15 @@ def prune_old_files(directory: Path, pattern: str, keep: int) -> None:
         path.unlink(missing_ok=True)
 
 
+def write_image_or_raise(path: Path, image, jpeg_quality: int | None = None) -> None:
+    cv2, _ = require_cv2_numpy()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    params = [] if jpeg_quality is None else [int(cv2.IMWRITE_JPEG_QUALITY), jpeg_quality]
+    ok = cv2.imwrite(str(path), image, params)
+    if not ok or not path.exists():
+        raise RuntimeError(f"Could not write image: {path}")
+
+
 def open_camera(rtsp_url: str):
     cv2, _ = require_cv2_numpy()
     cap = cv2.VideoCapture(rtsp_url, cv2.CAP_FFMPEG)
@@ -749,7 +758,11 @@ def capture_laser_samples(args: argparse.Namespace) -> None:
     accepted_count = 0
     attempt = 0
     cap = open_camera(args.rtsp_url)
-    print(f"camera_stream=open preview={preview_path} debug_preview={debug_preview_path}")
+    print(
+        f"camera_stream=open preview={preview_path.resolve()} "
+        f"debug_preview={debug_preview_path.resolve()} "
+        f"debug_attempt_dir={debug_attempt_dir.resolve()}"
+    )
     try:
         while accepted_count < args.count:
             attempt += 1
@@ -850,9 +863,9 @@ def capture_laser_samples(args: argparse.Namespace) -> None:
             sample_accepted = bool(best_attempt["sample_accepted"])
             raw_attempt_path = debug_attempt_dir / f"attempt_{attempt:04d}_raw.jpg"
             debug_attempt_path = debug_attempt_dir / f"attempt_{attempt:04d}_debug.jpg"
-            cv2.imwrite(str(preview_path), image, [int(cv2.IMWRITE_JPEG_QUALITY), args.jpeg_quality])
-            cv2.imwrite(str(raw_attempt_path), image, [int(cv2.IMWRITE_JPEG_QUALITY), args.jpeg_quality])
-            cv2.imwrite(str(image_path), image, [int(cv2.IMWRITE_JPEG_QUALITY), args.jpeg_quality])
+            write_image_or_raise(preview_path, image, args.jpeg_quality)
+            write_image_or_raise(raw_attempt_path, image, args.jpeg_quality)
+            write_image_or_raise(image_path, image, args.jpeg_quality)
             sample = {
                 "created_at": datetime.now().isoformat(timespec="seconds"),
                 "image": str(image_path),
@@ -897,6 +910,11 @@ def capture_laser_samples(args: argparse.Namespace) -> None:
             )
             prune_old_files(debug_attempt_dir, "attempt_*_raw.jpg", args.keep_debug_attempts)
             prune_old_files(debug_attempt_dir, "attempt_*_debug.jpg", args.keep_debug_attempts)
+            files_written = (
+                f"files_written raw={raw_attempt_path.resolve()} "
+                f"debug={debug_attempt_path.resolve()} "
+                f"latest={preview_path.resolve()}"
+            )
             status = "accepted" if sample_accepted else "rejected"
             if sample_accepted or args.save_rejected:
                 append_jsonl(samples_path, sample)
@@ -906,7 +924,8 @@ def capture_laser_samples(args: argparse.Namespace) -> None:
                     f"box={format_box_label(region, row, col)} "
                     f"accepted_count={accepted_count + int(sample_accepted)}/{args.count} "
                     f"laser_detected={str(dot is not None).lower()} grid_found={str(grid_found).lower()} "
-                    f"box_check={box_check.get('box_check')} {box_check_summary(box_check)}"
+                    f"box_check={box_check.get('box_check')} {box_check_summary(box_check)} "
+                    f"{files_written}"
                 )
             else:
                 image_path.unlink(missing_ok=True)
@@ -917,7 +936,8 @@ def capture_laser_samples(args: argparse.Namespace) -> None:
                     f"accepted_count={accepted_count}/{args.count} "
                     f"laser_detected={str(dot is not None).lower()} grid_found={str(grid_found).lower()} "
                     f"box_check={box_check.get('box_check')} {box_check_summary(box_check)} "
-                    f"grid_reason={grid_debug.get('reason', 'none')}"
+                    f"grid_reason={grid_debug.get('reason', 'none')} "
+                    f"{files_written}"
                 )
             if sample_accepted:
                 accepted_count += 1
