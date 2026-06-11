@@ -1022,9 +1022,11 @@ def capture_laser_samples(args: argparse.Namespace) -> None:
 
     accepted_count = 0
     attempt = 0
-    cap = open_camera(args.rtsp_url)
+    use_timeout_capture = args.capture_timeout_sec > 0
+    cap = None if use_timeout_capture else open_camera(args.rtsp_url)
     print(
-        f"camera_stream=open preview={preview_path.resolve()} "
+        f"camera_stream={'timeout_frames' if use_timeout_capture else 'open'} "
+        f"preview={preview_path.resolve()} "
         f"debug_preview={debug_preview_path.resolve()} "
         f"debug_attempt_dir={debug_attempt_dir.resolve()}"
     )
@@ -1050,11 +1052,27 @@ def capture_laser_samples(args: argparse.Namespace) -> None:
             cached_grid_debug: dict[str, object] | None = None
             log_step(f"attempt={attempt} label={format_box_label(region, row, col)} capture_start")
             if args.flush_frames > 0:
-                log_step(f"attempt={attempt} flushing_frames={args.flush_frames}")
-                cap = flush_camera_frames(cap, args.flush_frames, reconnect_url=args.rtsp_url)
+                if use_timeout_capture:
+                    log_step(f"attempt={attempt} skip_flush_for_timeout_capture=true")
+                else:
+                    log_step(f"attempt={attempt} flushing_frames={args.flush_frames}")
+                    cap = flush_camera_frames(cap, args.flush_frames, reconnect_url=args.rtsp_url)
             for burst_index in range(1, args.burst_frames + 1):
                 log_step(f"attempt={attempt} burst={burst_index}/{args.burst_frames} reading_camera")
-                cap, image = read_camera_frame(cap, reconnect_url=args.rtsp_url)
+                if use_timeout_capture:
+                    burst_capture_path = debug_attempt_dir / f"_attempt_{attempt:04d}_burst_{burst_index:02d}.jpg"
+                    capture_one_frame_with_timeout(
+                        rtsp_url=args.rtsp_url,
+                        output=burst_capture_path,
+                        jpeg_quality=args.jpeg_quality,
+                        timeout_sec=args.capture_timeout_sec,
+                    )
+                    image = cv2.imread(str(burst_capture_path))
+                    if image is None:
+                        raise RuntimeError(f"OpenCV could not read burst frame: {burst_capture_path}")
+                    burst_capture_path.unlink(missing_ok=True)
+                else:
+                    cap, image = read_camera_frame(cap, reconnect_url=args.rtsp_url)
                 log_step(f"attempt={attempt} burst={burst_index}/{args.burst_frames} frame_read")
                 dot, laser_debug = detect_laser_dot(
                     image,
@@ -1236,7 +1254,8 @@ def capture_laser_samples(args: argparse.Namespace) -> None:
             if sample_accepted:
                 accepted_count += 1
     finally:
-        cap.release()
+        if cap is not None:
+            cap.release()
 
 
 def calibrate_from_images(args: argparse.Namespace) -> None:
@@ -1548,6 +1567,12 @@ def build_parser() -> argparse.ArgumentParser:
     laser.add_argument("--burst-interval-sec", type=float, default=0.08)
     laser.add_argument("--grid-retry-frames", type=int, default=2)
     laser.add_argument("--flush-frames", type=int, default=0)
+    laser.add_argument(
+        "--capture-timeout-sec",
+        type=float,
+        default=6.0,
+        help="Timeout for each RTSP frame during laser capture. Use 0 for the old persistent camera mode.",
+    )
     laser.add_argument("--jpeg-quality", type=int, default=92)
     add_laser_args(laser)
     add_grid_args(laser)
