@@ -210,15 +210,16 @@ Current default:
 
 ```text
 grid_shape = l_shape
-lower grid intersections = 8 rows x 8 cols
-lower grid boxes = 7 rows x 7 cols
+total grid lines = 13 horizontal x 8 vertical
+lower grid intersections = 9 rows x 8 cols
+lower grid boxes = 8 rows x 7 cols
 top extension boxes = 4 rows x 2 cols
 square_size_cm = 15
 roi = 700,420,320,390 for test_camera.jpg
 ```
 
 Use `docs/images/l_shape_grid_box_labels.jpg` as the reference image. Lower
-boxes are labeled `1,1` through `7,7`. Top-extension boxes are labeled `T1,1`
+boxes are labeled `1,1` through `8,7`. Top-extension boxes are labeled `T1,1`
 through `T4,2`.
 
 ### 5.2 Inspect The Existing Test Image
@@ -236,13 +237,13 @@ Good result:
 
 ```text
 grid_found=true
-point_count=76
+point_count=84
 ```
 
-Why `76`:
+Why `84`:
 
 ```text
-64 lower-grid intersections + 12 top-extension intersections = 76
+72 lower-grid intersections + 12 top-extension intersections = 84
 ```
 
 If `grid_found=false`, check:
@@ -328,7 +329,7 @@ Good result:
 
 ```text
 grid_reference_saved=...
-grid_found=true point_count=76
+grid_found=true point_count=84
 ```
 
 Then turn the lights off, point the green laser into a box, and start dark

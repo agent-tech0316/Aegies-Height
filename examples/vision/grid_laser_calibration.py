@@ -1291,7 +1291,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     def add_grid_args(p: argparse.ArgumentParser) -> None:
         p.add_argument("--grid-shape", choices=["rectangle", "l_shape"], default="l_shape")
-        p.add_argument("--grid-rows", type=int, default=8)
+        p.add_argument("--grid-rows", type=int, default=9)
         p.add_argument("--grid-cols", type=int, default=8)
         p.add_argument("--square-size-cm", type=float, default=15.0)
         p.add_argument("--top-extension-rows", type=int, default=4)

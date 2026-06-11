@@ -47,10 +47,11 @@ Good result:
 
 ```text
 grid_found=true
-point_count=76
+point_count=84
 ```
 
-The current target is an L-shaped grid: lower `7x7` boxes plus the top `4x2`
+The current target is an L-shaped grid: total `13` horizontal lines by `8`
+vertical lines, with lower `8x7` boxes plus the top `4x2`
 box extension. Lower labels are `row,col` such as `1,1`. Top-extension labels
 are `Trow,col` such as `T1,1`.
 
