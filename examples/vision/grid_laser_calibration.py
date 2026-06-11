@@ -538,8 +538,12 @@ def dot_inside_labeled_box(
         min(left, right) - margin_px <= dot.x <= max(left, right) + margin_px
         and min(top, bottom) - margin_px <= dot.y <= max(top, bottom) + margin_px
     )
+    typed_box = format_box_label(region, row, col)
+    if inside and suggested_box and suggested_box != typed_box:
+        inside = False
     return {
         "box_check": "inside" if inside else "outside",
+        "reason": None if inside else ("closest_box_mismatch" if suggested_box and suggested_box != typed_box else "outside_bounds"),
         "margin_px": margin_px,
         "expected_box_bounds_px": {
             "left": round(left, 2),
@@ -782,6 +786,7 @@ def detect_laser_dot(
         mask1 = cv2.inRange(hsv, np.array([0, min_saturation, min_value]), np.array([16, 255, 255]))
         mask2 = cv2.inRange(hsv, np.array([162, min_saturation, min_value]), np.array([179, 255, 255]))
         mask = cv2.bitwise_or(mask1, mask2)
+        score_image = hsv[:, :, 2].astype(np.float32)
     elif color == "green":
         # The real laser often appears cyan/blue-green on the dog camera sensor,
         # so accept green through cyan hues while still rejecting white/gray glare
@@ -800,6 +805,7 @@ def detect_laser_dot(
             cv2.bitwise_and(hsv_mask, cv2.bitwise_and(dominance_mask, bright_mask)),
             green_only_mask,
         )
+        score_image = green.astype(np.float32)
     else:
         raise ValueError("laser color must be red or green")
 
@@ -810,12 +816,22 @@ def detect_laser_dot(
         area = float(cv2.contourArea(contour))
         if area < min_area or area > max_area:
             continue
-        moments = cv2.moments(contour)
-        if moments["m00"] == 0:
-            continue
-        x = float(moments["m10"] / moments["m00"])
-        y = float(moments["m01"] / moments["m00"])
         (_, _), radius = cv2.minEnclosingCircle(contour)
+        component_mask = np.zeros(mask.shape, dtype=np.uint8)
+        cv2.drawContours(component_mask, [contour], -1, 255, thickness=-1)
+        _min_value, peak_value, _min_loc, peak_loc = cv2.minMaxLoc(score_image, mask=component_mask)
+        if peak_value <= 0:
+            continue
+        peak_threshold = peak_value * 0.85
+        core_mask = (component_mask > 0) & (score_image >= peak_threshold)
+        core_y, core_x = np.where(core_mask)
+        if len(core_x) == 0:
+            x = float(peak_loc[0])
+            y = float(peak_loc[1])
+        else:
+            weights = score_image[core_y, core_x].astype(np.float64)
+            x = float(np.average(core_x, weights=weights))
+            y = float(np.average(core_y, weights=weights))
         x_int = max(0, min(mask.shape[1] - 1, int(round(x))))
         y_int = max(0, min(mask.shape[0] - 1, int(round(y))))
         brightness = float(hsv[y_int, x_int, 2])
