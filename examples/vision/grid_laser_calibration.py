@@ -274,6 +274,7 @@ def detect_grid_points(
     blue_hue_high: int,
     min_line_length: int,
     hough_threshold: int,
+    skip_left_x_lines: int,
     roi: tuple[int, int, int, int] | None = None,
 ):
     cv2, np = require_cv2_numpy()
@@ -327,6 +328,8 @@ def detect_grid_points(
     y_lines = group_close_values(horizontal_y, tolerance=22.0)
     raw_vertical_count = len(x_lines)
     raw_horizontal_count = len(y_lines)
+    if skip_left_x_lines > 0:
+        x_lines = sorted(x_lines)[skip_left_x_lines:]
 
     needed_y_lines = spec.rows if spec.shape == "rectangle" else spec.rows
     if len(x_lines) < spec.cols or len(y_lines) < needed_y_lines:
@@ -379,11 +382,12 @@ def detect_grid_points(
         "shape": spec.shape,
         "vertical_lines": len(x_lines),
         "horizontal_lines": len(selected_y_debug) + len(top_y_debug),
-        "raw_vertical_lines": raw_vertical_count,
-        "raw_horizontal_lines": raw_horizontal_count,
-        "hough_threshold": hough_threshold,
-        "roi": roi,
-        "top_extension_y_inferred": spec.shape == "l_shape" and inferred_top,
+                "raw_vertical_lines": raw_vertical_count,
+                "raw_horizontal_lines": raw_horizontal_count,
+                "skip_left_x_lines": skip_left_x_lines,
+                "hough_threshold": hough_threshold,
+                "roi": roi,
+                "top_extension_y_inferred": spec.shape == "l_shape" and inferred_top,
         "selected_x_lines": [round(value + offset_x, 2) for value in x_lines],
         "selected_lower_y_lines": [round(value + offset_y, 2) for value in selected_y_debug],
         "selected_top_extension_y_lines": [round(value + offset_y, 2) for value in top_y_debug],
@@ -724,6 +728,7 @@ def capture_grid_reference(args: argparse.Namespace) -> None:
         blue_hue_high=args.blue_hue_high,
         min_line_length=args.min_line_length,
         hough_threshold=args.hough_threshold,
+        skip_left_x_lines=args.skip_left_x_lines,
         roi=requested_roi,
     )
     if not found and requested_roi is not None:
@@ -934,6 +939,7 @@ def inspect_grid(args: argparse.Namespace) -> None:
         blue_hue_high=args.blue_hue_high,
         min_line_length=args.min_line_length,
         hough_threshold=args.hough_threshold,
+        skip_left_x_lines=args.skip_left_x_lines,
         roi=parse_roi(args.roi),
     )
     print(f"grid_found={str(found).lower()}")
@@ -976,6 +982,7 @@ def capture_grid(args: argparse.Namespace) -> None:
                 blue_hue_high=args.blue_hue_high,
                 min_line_length=args.min_line_length,
                 hough_threshold=args.hough_threshold,
+                skip_left_x_lines=args.skip_left_x_lines,
                 roi=parse_roi(args.roi),
             )
             if found:
@@ -1146,6 +1153,7 @@ def capture_laser_samples(args: argparse.Namespace) -> None:
                         blue_hue_high=args.blue_hue_high,
                         min_line_length=args.min_line_length,
                         hough_threshold=args.hough_threshold,
+                        skip_left_x_lines=args.skip_left_x_lines,
                         roi=roi,
                     )
                     cached_grid_found = grid_found
@@ -1401,6 +1409,7 @@ def calibrate_from_images(args: argparse.Namespace) -> None:
             blue_hue_high=args.blue_hue_high,
             min_line_length=args.min_line_length,
             hough_threshold=args.hough_threshold,
+            skip_left_x_lines=args.skip_left_x_lines,
             roi=parse_roi(args.roi),
         )
         if not found or points is None:
@@ -1483,6 +1492,7 @@ def calibrate_from_laser_samples(args: argparse.Namespace) -> None:
                 blue_hue_high=args.blue_hue_high,
                 min_line_length=args.min_line_length,
                 hough_threshold=args.hough_threshold,
+                skip_left_x_lines=args.skip_left_x_lines,
                 roi=parse_roi(args.roi),
             )
             if not found or grid_points is None:
@@ -1607,6 +1617,12 @@ def build_parser() -> argparse.ArgumentParser:
         p.add_argument("--blue-hue-high", type=int, default=135)
         p.add_argument("--min-line-length", type=int, default=25)
         p.add_argument("--hough-threshold", type=int, default=50)
+        p.add_argument(
+            "--skip-left-x-lines",
+            type=int,
+            default=0,
+            help="Ignore this many detected vertical blue lines from the left before numbering grid columns.",
+        )
 
     def add_laser_args(p: argparse.ArgumentParser) -> None:
         p.add_argument("--laser-color", choices=["red", "green"], default="green")
