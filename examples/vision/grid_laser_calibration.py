@@ -1082,20 +1082,39 @@ def capture_laser_samples(args: argparse.Namespace) -> None:
                     cap = flush_camera_frames(cap, args.flush_frames, reconnect_url=args.rtsp_url)
             for burst_index in range(1, args.burst_frames + 1):
                 log_step(f"attempt={attempt} burst={burst_index}/{args.burst_frames} reading_camera")
-                if use_timeout_capture:
-                    burst_capture_path = debug_attempt_dir / f"_attempt_{attempt:04d}_burst_{burst_index:02d}.jpg"
-                    capture_one_frame_with_timeout(
-                        rtsp_url=args.rtsp_url,
-                        output=burst_capture_path,
-                        jpeg_quality=args.jpeg_quality,
-                        timeout_sec=args.capture_timeout_sec,
+                try:
+                    if use_timeout_capture:
+                        burst_capture_path = debug_attempt_dir / f"_attempt_{attempt:04d}_burst_{burst_index:02d}.jpg"
+                        capture_one_frame_with_timeout(
+                            rtsp_url=args.rtsp_url,
+                            output=burst_capture_path,
+                            jpeg_quality=args.jpeg_quality,
+                            timeout_sec=args.capture_timeout_sec,
+                        )
+                        image = cv2.imread(str(burst_capture_path))
+                        if image is None:
+                            raise RuntimeError(f"OpenCV could not read burst frame: {burst_capture_path}")
+                        burst_capture_path.unlink(missing_ok=True)
+                    else:
+                        cap, image = read_camera_frame(cap, reconnect_url=args.rtsp_url)
+                except RuntimeError as exc:
+                    print(
+                        f"camera_timeout=retry_sample attempt={attempt} "
+                        f"burst={burst_index}/{args.burst_frames} error={exc}",
+                        flush=True,
                     )
-                    image = cv2.imread(str(burst_capture_path))
-                    if image is None:
-                        raise RuntimeError(f"OpenCV could not read burst frame: {burst_capture_path}")
-                    burst_capture_path.unlink(missing_ok=True)
-                else:
-                    cap, image = read_camera_frame(cap, reconnect_url=args.rtsp_url)
+                    best_attempt = {
+                        "score": -1.0,
+                        "image": None,
+                        "dot": None,
+                        "laser_debug": {"reason": "camera_timeout", "error": str(exc)},
+                        "grid_found": bool(grid_reference is not None),
+                        "grid_points": None if grid_reference is None else grid_reference["grid_points"],
+                        "grid_debug": {} if grid_reference is None else grid_reference["grid_debug"],
+                        "box_check": {"box_check": "unknown", "reason": "camera_timeout"},
+                        "sample_accepted": False,
+                    }
+                    break
                 log_step(f"attempt={attempt} burst={burst_index}/{args.burst_frames} frame_read")
                 dot, laser_debug = detect_laser_dot(
                     image,
@@ -1193,6 +1212,78 @@ def capture_laser_samples(args: argparse.Namespace) -> None:
             grid_debug = best_attempt["grid_debug"]
             box_check = best_attempt["box_check"]
             sample_accepted = bool(best_attempt["sample_accepted"])
+            if image is None:
+                print(
+                    f"sample_rejected=no_frame box={format_box_label(region, row, col)} "
+                    f"accepted_count={accepted_count}/{args.count} "
+                    f"reason={box_check.get('reason', 'camera_timeout')}",
+                    flush=True,
+                )
+                continue
+
+            if (
+                args.interactive
+                and dot is not None
+                and grid_found
+                and not sample_accepted
+                and box_check.get("suggested_box")
+            ):
+                typed_label = format_box_label(region, row, col)
+                suggested_label = str(box_check["suggested_box"])
+                print(
+                    f"box_mismatch typed={typed_label} suggested={suggested_label} "
+                    f"{box_check_summary(box_check)}",
+                    flush=True,
+                )
+                correction = input(
+                    "keep this photo? y=typed, s=suggested, new label like 2,3, Enter=reject> "
+                ).strip()
+                if correction.lower() == "y":
+                    box_check = {
+                        **box_check,
+                        "box_check": "inside",
+                        "reason": "user_confirmed_typed_box",
+                        "user_override": True,
+                    }
+                    sample_accepted = True
+                elif correction.lower() == "s":
+                    region, row, col = parse_box_label(suggested_label)
+                    box_check = dot_inside_labeled_box(
+                        spec=spec,
+                        grid_debug=grid_debug,
+                        dot=dot,
+                        region=region,
+                        row=row,
+                        col=col,
+                        margin_px=args.box_margin_px,
+                    )
+                    box_check = {
+                        **box_check,
+                        "box_check": "inside",
+                        "reason": "user_selected_suggested_box",
+                        "user_override": True,
+                    }
+                    sample_accepted = True
+                elif correction:
+                    region, row, col = parse_box_label(correction)
+                    grid_box_center_object_point(spec=spec, row=row, col=col, region=region)
+                    box_check = dot_inside_labeled_box(
+                        spec=spec,
+                        grid_debug=grid_debug,
+                        dot=dot,
+                        region=region,
+                        row=row,
+                        col=col,
+                        margin_px=args.box_margin_px,
+                    )
+                    box_check = {
+                        **box_check,
+                        "box_check": "inside",
+                        "reason": "user_corrected_box_label",
+                        "user_override": True,
+                    }
+                    sample_accepted = True
+
             raw_attempt_path = debug_attempt_dir / f"attempt_{attempt:04d}_raw.jpg"
             debug_attempt_path = debug_attempt_dir / f"attempt_{attempt:04d}_debug.jpg"
             log_step(f"attempt={attempt} writing_images")
