@@ -762,6 +762,58 @@ def detect_laser_dot(
     return dot, {"laser_candidates": len(candidates), "laser_score": round(score, 2), "roi": roi}
 
 
+def inspect_laser(args: argparse.Namespace) -> None:
+    cv2, _ = require_cv2_numpy()
+    image_path = Path(args.output)
+    if args.image:
+        source_path = Path(args.image)
+        image = cv2.imread(str(source_path))
+        if image is None:
+            raise RuntimeError(f"OpenCV could not read image: {source_path}")
+        write_image_or_raise(image_path, image, args.jpeg_quality)
+    else:
+        log_step("inspect_laser_open_camera")
+        cap = open_camera(args.rtsp_url)
+        try:
+            if args.warmup_frames > 0:
+                log_step(f"inspect_laser_warmup_frames={args.warmup_frames}")
+                cap = flush_camera_frames(cap, args.warmup_frames, reconnect_url=args.rtsp_url)
+            log_step("inspect_laser_read_camera")
+            cap, image = read_camera_frame(cap, reconnect_url=args.rtsp_url)
+            log_step("inspect_laser_frame_read")
+            write_image_or_raise(image_path, image, args.jpeg_quality)
+        finally:
+            cap.release()
+
+    dot, debug = detect_laser_dot(
+        image,
+        color=args.laser_color,
+        min_area=args.laser_min_area,
+        max_area=args.laser_max_area,
+        roi=parse_roi(args.roi),
+        min_saturation=args.laser_min_saturation,
+        min_value=args.laser_min_value,
+    )
+    overlay = image.copy()
+    roi = parse_roi(args.roi)
+    if roi is not None:
+        x, y, width, height = roi
+        cv2.rectangle(overlay, (x, y), (x + width, y + height), (255, 255, 0), 2)
+    if dot is not None:
+        center = (int(round(dot.x)), int(round(dot.y)))
+        cv2.circle(overlay, center, 12, (0, 0, 255), 3)
+        cv2.circle(overlay, center, 3, (255, 255, 255), -1)
+    status = f"laser_detected={str(dot is not None).lower()}"
+    cv2.putText(overlay, status, (24, 42), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 0, 0), 5, cv2.LINE_AA)
+    cv2.putText(overlay, status, (24, 42), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 255, 255), 2, cv2.LINE_AA)
+    write_image_or_raise(Path(args.debug_output), overlay, args.jpeg_quality)
+
+    print(status)
+    print(f"image={image_path.resolve()}")
+    print(f"debug_image={Path(args.debug_output).resolve()}")
+    print(json.dumps({"laser_dot": None if dot is None else asdict(dot), "debug": debug}, indent=2))
+
+
 def inspect_grid(args: argparse.Namespace) -> None:
     cv2, _ = require_cv2_numpy()
     image = cv2.imread(str(args.image))
@@ -1334,6 +1386,17 @@ def build_parser() -> argparse.ArgumentParser:
     inspect.add_argument("--image", default="test_camera.jpg")
     add_grid_args(inspect)
     inspect.set_defaults(func=inspect_grid)
+
+    inspect_laser_cmd = sub.add_parser("inspect-laser", help="Capture/check whether the green laser is visible.")
+    inspect_laser_cmd.add_argument("--rtsp-url", default=DEFAULT_RTSP_URL)
+    inspect_laser_cmd.add_argument("--image", default=None)
+    inspect_laser_cmd.add_argument("--output", default="camera_calibration_runs/latest/laser_test.jpg")
+    inspect_laser_cmd.add_argument("--debug-output", default="camera_calibration_runs/latest/laser_test_debug.jpg")
+    inspect_laser_cmd.add_argument("--warmup-frames", type=int, default=0)
+    inspect_laser_cmd.add_argument("--jpeg-quality", type=int, default=92)
+    inspect_laser_cmd.add_argument("--roi", default=None)
+    add_laser_args(inspect_laser_cmd)
+    inspect_laser_cmd.set_defaults(func=inspect_laser)
 
     capture = sub.add_parser("capture-grid", help="Capture many dog-camera grid images.")
     capture.add_argument("--rtsp-url", default=DEFAULT_RTSP_URL)
