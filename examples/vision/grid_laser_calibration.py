@@ -690,7 +690,6 @@ def dot_inside_labeled_box(
         lower_y_lines=lower_y_lines,
         top_y_lines=top_y_lines,
         dot=dot,
-        margin_px=margin_px,
     )
 
     if region == "lower":
@@ -749,20 +748,21 @@ def suggested_box_for_dot(
     lower_y_lines: list[float],
     top_y_lines: list[float],
     dot: LaserDot,
-    margin_px: float,
 ) -> str | None:
-    x_index = interval_index(dot.x, x_lines, margin_px=margin_px)
+    # Suggestions must use the detected laser center only. Margin is only for
+    # accepting a typed label near a border, not for deciding which box owns the dot.
+    x_index = interval_index(dot.x, x_lines, margin_px=0.0)
     if x_index is None:
         return None
 
-    lower_y_index = interval_index(dot.y, lower_y_lines, margin_px=margin_px)
+    lower_y_index = interval_index(dot.y, lower_y_lines, margin_px=0.0)
     if lower_y_index is not None:
         row = lower_y_index + 1
         col = x_index + 1
         if 1 <= row <= spec.box_rows and 1 <= col <= spec.box_cols:
             return format_box_label("lower", row, col)
 
-    top_y_index = interval_index(dot.y, top_y_lines, margin_px=margin_px)
+    top_y_index = interval_index(dot.y, top_y_lines, margin_px=0.0)
     if top_y_index is not None and spec.shape == "l_shape":
         start_index = spec.top_extension_start_col - 1
         top_col = x_index - start_index + 1
