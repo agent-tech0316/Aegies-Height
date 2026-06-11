@@ -1792,6 +1792,130 @@ def calibrate_from_laser_samples(args: argparse.Namespace) -> None:
     print(f"laser_error_px_avg={report['laser_reprojection_error_px_avg']:.3f}")
 
 
+def homography_from_grid_reference(reference: dict[str, object], spec: GridSpec):
+    cv2, np = require_cv2_numpy()
+    image_points = np.asarray(reference["grid_points"], dtype=np.float32).reshape(-1, 2)
+    wall_points = object_points(spec).reshape(-1, 3)[:, :2].astype(np.float32)
+    if image_points.shape[0] != wall_points.shape[0]:
+        raise RuntimeError(
+            f"grid/image point count mismatch: image={image_points.shape[0]} wall={wall_points.shape[0]}"
+        )
+    homography, mask = cv2.findHomography(image_points, wall_points, method=0)
+    if homography is None:
+        raise RuntimeError("OpenCV could not compute wall homography")
+    projected = cv2.perspectiveTransform(image_points.reshape(-1, 1, 2), homography).reshape(-1, 2)
+    errors = np.linalg.norm(projected - wall_points, axis=1)
+    return homography, errors
+
+
+def project_pixel_to_wall_cm(homography, x: float, y: float) -> tuple[float, float]:
+    _, np = require_cv2_numpy()
+    point = np.asarray([x, y, 1.0], dtype=np.float64)
+    mapped = homography @ point
+    if abs(float(mapped[2])) < 1e-9:
+        raise RuntimeError("homography projected point with near-zero scale")
+    return float(mapped[0] / mapped[2]), float(mapped[1] / mapped[2])
+
+
+def project_laser_samples_to_wall(args: argparse.Namespace) -> None:
+    _, np = require_cv2_numpy()
+    spec = make_grid_spec(args)
+    samples_path = Path(args.samples)
+    samples = load_jsonl(samples_path)
+    if not samples:
+        raise RuntimeError(f"No laser samples found: {args.samples}")
+    grid_reference = load_grid_reference(args.grid_reference)
+    if grid_reference is None:
+        raise RuntimeError("project-laser-wall requires --grid-reference")
+    grid_reference = rebuild_grid_reference_lines(
+        grid_reference,
+        spec,
+        lower_x_line_start_index=args.lower_x_line_start_index,
+        lower_y_line_start_index=args.lower_y_line_start_index,
+        lower_first_x_px=args.lower_first_x_px,
+        lower_first_y_px=args.lower_first_y_px,
+    )
+    homography, grid_errors = homography_from_grid_reference(grid_reference, spec)
+
+    projected_samples: list[dict[str, object]] = []
+    distances_to_box_center: list[float] = []
+    for sample in samples:
+        if args.accepted_only and not sample.get("sample_accepted"):
+            continue
+        laser_dot = sample.get("laser_dot")
+        if not isinstance(laser_dot, dict):
+            continue
+        region = str(sample.get("box_region", "lower"))
+        row = int(sample["box_row"])
+        col = int(sample["box_col"])
+        laser_wall_x_cm, laser_wall_y_cm = project_pixel_to_wall_cm(
+            homography,
+            float(laser_dot["x"]),
+            float(laser_dot["y"]),
+        )
+        box_center = grid_box_center_object_point(spec=spec, row=row, col=col, region=region).reshape(-1)
+        dx_cm = laser_wall_x_cm - float(box_center[0])
+        dy_cm = laser_wall_y_cm - float(box_center[1])
+        distance_cm = float(math.hypot(dx_cm, dy_cm))
+        distances_to_box_center.append(distance_cm)
+        projected_samples.append(
+            {
+                "image": sample.get("image"),
+                "box_label": format_box_label(region, row, col),
+                "box_region": region,
+                "box_row": row,
+                "box_col": col,
+                "laser_pixel": {
+                    "x": float(laser_dot["x"]),
+                    "y": float(laser_dot["y"]),
+                },
+                "laser_wall_cm": {
+                    "x": laser_wall_x_cm,
+                    "y": laser_wall_y_cm,
+                },
+                "typed_box_center_cm": {
+                    "x": float(box_center[0]),
+                    "y": float(box_center[1]),
+                },
+                "laser_minus_box_center_cm": {
+                    "x": dx_cm,
+                    "y": dy_cm,
+                    "distance": distance_cm,
+                },
+                "sample_accepted": bool(sample.get("sample_accepted")),
+            }
+        )
+
+    report = {
+        "created_at": datetime.now().isoformat(timespec="seconds"),
+        "source": "wall_homography_from_grid_reference",
+        "samples": args.samples,
+        "grid_reference": args.grid_reference,
+        "grid": spec.as_dict(),
+        "homography_image_px_to_wall_cm": homography.tolist(),
+        "grid_homography_error_cm_avg": float(grid_errors.mean()),
+        "grid_homography_error_cm_max": float(grid_errors.max()),
+        "projected_count": len(projected_samples),
+        "laser_to_typed_box_center_cm_avg": (
+            float(sum(distances_to_box_center) / len(distances_to_box_center))
+            if distances_to_box_center
+            else None
+        ),
+        "laser_to_typed_box_center_cm_max": (
+            float(max(distances_to_box_center)) if distances_to_box_center else None
+        ),
+        "projected_samples": projected_samples,
+    }
+    save_json(Path(args.output), report)
+    print(f"wall_projection_saved={args.output}")
+    print(f"projected_count={len(projected_samples)}")
+    print(f"grid_homography_error_cm_avg={report['grid_homography_error_cm_avg']:.4f}")
+    print(f"grid_homography_error_cm_max={report['grid_homography_error_cm_max']:.4f}")
+    if distances_to_box_center:
+        print(f"laser_to_box_center_cm_avg={report['laser_to_typed_box_center_cm_avg']:.3f}")
+        print(f"laser_to_box_center_cm_max={report['laser_to_typed_box_center_cm_max']:.3f}")
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -1959,6 +2083,17 @@ def build_parser() -> argparse.ArgumentParser:
     laser_calibrate.add_argument("--fix-principal-point", action="store_true")
     add_grid_args(laser_calibrate)
     laser_calibrate.set_defaults(func=calibrate_from_laser_samples)
+
+    wall_project = sub.add_parser(
+        "project-laser-wall",
+        help="Project laser center pixels to exact wall centimeters using a grid-reference homography.",
+    )
+    wall_project.add_argument("--samples", default="camera_calibration_runs/latest/laser_samples.jsonl")
+    wall_project.add_argument("--grid-reference", required=True)
+    wall_project.add_argument("--output", default="camera_calibration_runs/latest/wall_homography_samples.json")
+    wall_project.add_argument("--accepted-only", action="store_true")
+    add_grid_args(wall_project)
+    wall_project.set_defaults(func=project_laser_samples_to_wall)
     return parser
 
 
