@@ -504,6 +504,58 @@ def box_check_summary(box_check: dict[str, object]) -> str:
     )
 
 
+def save_debug_overlay(
+    *,
+    image,
+    output: Path,
+    grid_debug: dict[str, object],
+    dot: LaserDot | None,
+    box_check: dict[str, object],
+    label: str,
+) -> None:
+    cv2, _ = require_cv2_numpy()
+    overlay = image.copy()
+
+    roi = grid_debug.get("roi")
+    if isinstance(roi, (list, tuple)) and len(roi) == 4:
+        x, y, width, height = [int(value) for value in roi]
+        cv2.rectangle(overlay, (x, y), (x + width, y + height), (255, 255, 0), 2)
+
+    height, width = overlay.shape[:2]
+    for x_value in grid_debug.get("selected_x_lines", []):
+        x = int(round(float(x_value)))
+        cv2.line(overlay, (x, 0), (x, height - 1), (255, 0, 0), 1)
+    for y_value in grid_debug.get("selected_lower_y_lines", []):
+        y = int(round(float(y_value)))
+        cv2.line(overlay, (0, y), (width - 1, y), (0, 255, 255), 1)
+    for y_value in grid_debug.get("selected_top_extension_y_lines", []):
+        y = int(round(float(y_value)))
+        cv2.line(overlay, (0, y), (width - 1, y), (255, 255, 0), 1)
+
+    bounds = box_check.get("expected_box_bounds_px")
+    if isinstance(bounds, dict):
+        left = int(round(float(bounds["left"])))
+        right = int(round(float(bounds["right"])))
+        top = int(round(float(bounds["top"])))
+        bottom = int(round(float(bounds["bottom"])))
+        cv2.rectangle(overlay, (left, top), (right, bottom), (0, 255, 0), 3)
+
+    if dot is not None:
+        center = (int(round(dot.x)), int(round(dot.y)))
+        cv2.circle(overlay, center, 10, (0, 0, 255), 3)
+        cv2.circle(overlay, center, 2, (255, 255, 255), -1)
+
+    text = f"typed={label} check={box_check.get('box_check')}"
+    suggestion = box_check.get("suggested_box")
+    if suggestion:
+        text += f" suggested={suggestion}"
+    cv2.putText(overlay, text, (24, 42), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 0, 0), 5, cv2.LINE_AA)
+    cv2.putText(overlay, text, (24, 42), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 255, 255), 2, cv2.LINE_AA)
+
+    output.parent.mkdir(parents=True, exist_ok=True)
+    cv2.imwrite(str(output), overlay)
+
+
 def make_grid_spec(args: argparse.Namespace) -> GridSpec:
     return GridSpec(
         rows=args.grid_rows,
@@ -669,6 +721,8 @@ def capture_laser_samples(args: argparse.Namespace) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     preview_path = Path(args.preview)
     preview_path.parent.mkdir(parents=True, exist_ok=True)
+    debug_preview_path = Path(args.debug_preview)
+    debug_preview_path.parent.mkdir(parents=True, exist_ok=True)
     print(f"laser_samples={samples_path}")
     print(f"grid_shape={spec.shape}")
     print(f"lower_grid_boxes={spec.box_rows}x{spec.box_cols}")
@@ -685,7 +739,7 @@ def capture_laser_samples(args: argparse.Namespace) -> None:
     accepted_count = 0
     attempt = 0
     cap = open_camera(args.rtsp_url)
-    print(f"camera_stream=open preview={preview_path}")
+    print(f"camera_stream=open preview={preview_path} debug_preview={debug_preview_path}")
     try:
         while accepted_count < args.count:
             attempt += 1
@@ -779,6 +833,7 @@ def capture_laser_samples(args: argparse.Namespace) -> None:
                 "created_at": datetime.now().isoformat(timespec="seconds"),
                 "image": str(image_path),
                 "preview": str(preview_path),
+                "debug_preview": str(debug_preview_path),
                 "box_region": region,
                 "box_row": row,
                 "box_col": col,
@@ -798,11 +853,20 @@ def capture_laser_samples(args: argparse.Namespace) -> None:
                 "sample_accepted": sample_accepted,
                 "label": args.label,
             }
+            save_debug_overlay(
+                image=image,
+                output=debug_preview_path,
+                grid_debug=grid_debug,
+                dot=dot,
+                box_check=box_check,
+                label=format_box_label(region, row, col),
+            )
             status = "accepted" if sample_accepted else "rejected"
             if sample_accepted or args.save_rejected:
                 append_jsonl(samples_path, sample)
                 print(
-                    f"sample_{status}={image_path} preview={preview_path} box={format_box_label(region, row, col)} "
+                    f"sample_{status}={image_path} preview={preview_path} debug={debug_preview_path} "
+                    f"box={format_box_label(region, row, col)} "
                     f"accepted_count={accepted_count + int(sample_accepted)}/{args.count} "
                     f"laser_detected={str(dot is not None).lower()} grid_found={str(grid_found).lower()} "
                     f"box_check={box_check.get('box_check')} {box_check_summary(box_check)}"
@@ -810,7 +874,8 @@ def capture_laser_samples(args: argparse.Namespace) -> None:
             else:
                 image_path.unlink(missing_ok=True)
                 print(
-                    f"sample_rejected=not_saved preview={preview_path} box={format_box_label(region, row, col)} "
+                    f"sample_rejected=not_saved preview={preview_path} debug={debug_preview_path} "
+                    f"box={format_box_label(region, row, col)} "
                     f"accepted_count={accepted_count}/{args.count} "
                     f"laser_detected={str(dot is not None).lower()} grid_found={str(grid_found).lower()} "
                     f"box_check={box_check.get('box_check')} {box_check_summary(box_check)} "
@@ -1081,6 +1146,7 @@ def build_parser() -> argparse.ArgumentParser:
     laser.add_argument("--save-rejected", action="store_true")
     laser.add_argument("--box-margin-px", type=float, default=12.0)
     laser.add_argument("--preview", default="camera_calibration_runs/latest/latest_laser_attempt.jpg")
+    laser.add_argument("--debug-preview", default="camera_calibration_runs/latest/latest_laser_debug.jpg")
     laser.add_argument("--burst-frames", type=int, default=5)
     laser.add_argument("--burst-interval-sec", type=float, default=0.08)
     laser.add_argument("--jpeg-quality", type=int, default=92)
