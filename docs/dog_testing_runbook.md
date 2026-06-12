@@ -17,6 +17,7 @@ Use these files:
 ```text
 docs/dog_testing_runbook.md              # this guide
 docs/camera_height_workflow.md           # height workflow overview
+docs/accepted_laser_images_cleanup.md    # keep only accepted laser images and copy them off the robot
 examples/vision/grid_laser_calibration.py # grid + laser calibration commands
 examples/vision/height_calculator.py     # YOLO/distance/height helper commands
 examples/vision/tilt_telemetry_probe.py  # tilt telemetry test, for later

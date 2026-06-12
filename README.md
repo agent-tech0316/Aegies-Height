@@ -35,6 +35,7 @@ aegis_devkit/
 │   ├── getting_started.md     ← 进阶入门（配置 / 诊断 / 紧急停止）
 │   ├── camera_height_workflow.md ← ★ 相机标定 + 倾斜测高流程
 │   ├── dog_testing_runbook.md ← ★ 今日测试命令（SSH / 标定 / 倾斜探测）
+│   ├── accepted_laser_images_cleanup.md ← ★ 保留64张可用激光图并传到电脑
 │   ├── d1_models.md           ← ★ Aegis 机型适配指南（EDU / Ultra / 点足 / 轮足）
 │   └── deployment.md          ← ★ 部署指南（程序上机器人 / 开机自启 / 升级）
 ├── examples/                  ← Python 示例
