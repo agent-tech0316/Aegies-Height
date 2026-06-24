@@ -6,6 +6,12 @@ __pycache__/
 
 # Generated calibration and capture output
 camera_calibration_runs/
+camera_level_runs/
+charuco_runs/
+human_height_runs/
+generated_assets/
+_debug_human_height_latest/
+_incoming/
 person_framing_runs/
 person_capture.jpg
 

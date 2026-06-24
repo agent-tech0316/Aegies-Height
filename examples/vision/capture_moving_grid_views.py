@@ -7,7 +7,9 @@ and captures more views.
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
+import os
 import time
 from datetime import datetime
 from pathlib import Path
@@ -20,39 +22,40 @@ from grid_laser_calibration import (
 )
 
 
-def stream_move(dog, *, label: str, vx: float, vy: float, yaw: float, seconds: float) -> int | None:
+def jsonable(value):
+    if hasattr(value, "__dataclass_fields__"):
+        from dataclasses import asdict
+
+        return asdict(value)
+    return value
+
+
+async def stream_move(motion, *, label: str, vx: float, vy: float, yaw: float, seconds: float):
     print(f"move={label} vx={vx:.3f} vy={vy:.3f} yaw={yaw:.3f} seconds={seconds:.2f}", flush=True)
     end = time.monotonic() + max(0.0, seconds)
     last_ret = None
     while time.monotonic() < end:
-        last_ret = dog.move(vx, vy, yaw)
-        time.sleep(0.05)
+        last_ret = await motion.cmd_vel(linear=vx, lateral=vy, angular=yaw)
+        await asyncio.sleep(0.05)
     return last_ret
 
 
-def zero_velocity(dog, seconds: float) -> int | None:
-    return stream_move(dog, label="zero", vx=0.0, vy=0.0, yaw=0.0, seconds=seconds)
+async def zero_velocity(motion, seconds: float):
+    return await stream_move(motion, label="zero", vx=0.0, vy=0.0, yaw=0.0, seconds=seconds)
 
 
-def connect_dog(args: argparse.Namespace):
-    from ff_sdk.internal.oem.zsibot import ZsibotClient, detect_local_ip
+async def connect_dog(args: argparse.Namespace):
+    import ff_sdk
+    from ff_sdk import Config
 
-    local_ip = detect_local_ip(args.host)
-    dog = ZsibotClient(
-        dog_ip=args.host,
-        local_ip=local_ip,
-        local_port=args.local_port,
-        variant=args.variant,
-    )
+    os.environ["FF_SDK_D1_HOST"] = args.host
+    os.environ["FF_SDK_D1_VARIANT"] = args.variant
     print(f"robot_host={args.host}", flush=True)
-    print(f"local_ip={local_ip}", flush=True)
+    print(f"robot_target={args.target}", flush=True)
     print(f"variant={args.variant}", flush=True)
-    connected = dog.connect(settle_timeout=5.0)
-    print(f"connected={connected}", flush=True)
-    if not connected:
-        dog.close()
-        raise RuntimeError("zsibot backend did not connect")
-    return dog
+    sess = await ff_sdk.connect(args.target, config=Config.from_env())
+    print("connected=true", flush=True)
+    return sess
 
 
 def capture_view(args: argparse.Namespace, output_dir: Path, label: str, index: int) -> dict[str, object]:
@@ -112,7 +115,7 @@ def default_plan(args: argparse.Namespace) -> list[tuple[str, float, float, floa
     ]
 
 
-def main() -> None:
+async def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--output-dir", default="camera_calibration_runs/latest/moving_grid_images")
     parser.add_argument("--rtsp-url", default=DEFAULT_RTSP_URL)
@@ -120,6 +123,7 @@ def main() -> None:
     parser.add_argument("--jpeg-quality", type=int, default=95)
     parser.add_argument("--settle-seconds", type=float, default=1.0)
     parser.add_argument("--enable-motion", action="store_true")
+    parser.add_argument("--target", default=os.environ.get("FF_SDK_TARGET", "D1-XG03"))
     parser.add_argument("--host", default="192.168.234.1")
     parser.add_argument("--variant", default="zsl-1")
     parser.add_argument("--local-port", type=int, default=43988)
@@ -141,32 +145,32 @@ def main() -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     manifest_path = output_dir / "manifest.json"
     records: list[dict[str, object]] = []
-    dog = None
+    sess = None
 
     try:
         if args.enable_motion:
-            dog = connect_dog(args)
-            print(f"battery={dog.battery()}", flush=True)
-            print("stand_up=true", flush=True)
-            print(f"stand_up_ret={dog.stand_up()}", flush=True)
-            time.sleep(args.stand_wait)
-            zero_velocity(dog, args.warmup_seconds)
+            sess = await connect_dog(args)
+            print(f"battery={jsonable(await sess.state.battery())}", flush=True)
+            print("stand=true", flush=True)
+            print(f"stand_ret={jsonable(await sess.motion.stand())}", flush=True)
+            await asyncio.sleep(args.stand_wait)
+            await zero_velocity(sess.motion, args.warmup_seconds)
         else:
             print("motion_disabled=true capture_only=true", flush=True)
 
         for index, (label, vx, vy, yaw, seconds) in enumerate(default_plan(args), start=1):
-            if dog is not None and seconds > 0:
-                ret = stream_move(dog, label=label, vx=vx, vy=vy, yaw=yaw, seconds=seconds)
-                zero_velocity(dog, args.stop_seconds)
-                print(f"{label}_move_ret={ret}", flush=True)
-                time.sleep(args.settle_seconds)
-            elif index > 1 and dog is None:
+            if sess is not None and seconds > 0:
+                ret = await stream_move(sess.motion, label=label, vx=vx, vy=vy, yaw=yaw, seconds=seconds)
+                await zero_velocity(sess.motion, args.stop_seconds)
+                print(f"{label}_move_ret={jsonable(ret)}", flush=True)
+                await asyncio.sleep(args.settle_seconds)
+            elif index > 1 and sess is None:
                 input(f"Move dog/view for '{label}', then press Enter to capture> ")
             records.append(capture_view(args, output_dir, label, index))
     finally:
-        if dog is not None:
-            zero_velocity(dog, args.stop_seconds)
-            dog.close()
+        if sess is not None:
+            await zero_velocity(sess.motion, args.stop_seconds)
+            await sess.close()
 
     manifest = {
         "created_at": datetime.now().isoformat(timespec="seconds"),
@@ -181,4 +185,4 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())

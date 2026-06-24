@@ -1,7 +1,7 @@
-"""Run a verified D1 movement sequence through the raw zsibot backend.
+"""Run a verified D1 movement sequence through the public ff_sdk D1 backend.
 
 Sequence:
-    stand_up -> zero warmup -> forward -> back -> left -> right -> zero stop
+    stand -> zero warmup -> forward -> back -> left -> right -> zero stop
 
 Usage:
     python examples/d1/raw_zsibot_sequence.py
@@ -9,13 +9,21 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import asyncio
+import os
 import time
 
-from ff_sdk.internal.oem.zsibot import ZsibotClient, detect_local_ip
+
+def jsonable(value):
+    if hasattr(value, "__dataclass_fields__"):
+        from dataclasses import asdict
+
+        return asdict(value)
+    return value
 
 
-def stream_move(
-    dog: ZsibotClient,
+async def stream_move(
+    sess,
     *,
     label: str,
     vx: float,
@@ -27,18 +35,17 @@ def stream_move(
     end = time.monotonic() + max(0.0, seconds)
     last_ret = None
     while time.monotonic() < end:
-        last_ret = dog.move(vx, vy, yaw)
-        time.sleep(0.05)
-    print(f"{label}_ret={last_ret}")
-    print(f"{label}_mode={dog.ctrl_mode()}")
-    print(f"{label}_position={dog.position()}")
-    print(f"{label}_velocity={dog.world_velocity()}")
+        last_ret = await sess.motion.cmd_vel(linear=vx, lateral=vy, angular=yaw)
+        await asyncio.sleep(0.05)
+    print(f"{label}_ret={jsonable(last_ret)}")
+    print(f"{label}_status={jsonable(await sess.state.status())}")
+    print(f"{label}_pose={jsonable(await sess.state.pose())}")
     return last_ret
 
 
-def zero_velocity(dog: ZsibotClient, seconds: float) -> int | None:
-    return stream_move(
-        dog,
+async def zero_velocity(sess, seconds: float):
+    return await stream_move(
+        sess,
         label="zero",
         vx=0.0,
         vy=0.0,
@@ -47,10 +54,12 @@ def zero_velocity(dog: ZsibotClient, seconds: float) -> int | None:
     )
 
 
-def main() -> None:
+async def main() -> None:
     parser = argparse.ArgumentParser()
+    parser.add_argument("--target", default=os.environ.get("FF_SDK_TARGET", "D1-XG03"))
     parser.add_argument("--host", default="192.168.234.1")
     parser.add_argument("--variant", default="zsl-1")
+    parser.add_argument("--local-ip", default=None, help="Accepted for old commands; public ff_sdk auto-detects it.")
     parser.add_argument("--stand-wait", type=float, default=3.0)
     parser.add_argument("--warmup-seconds", type=float, default=1.0)
     parser.add_argument("--move-seconds", type=float, default=1.2)
@@ -60,7 +69,6 @@ def main() -> None:
     parser.add_argument("--lateral-speed", type=float, default=0.18)
     args = parser.parse_args()
 
-    local_ip = detect_local_ip(args.host)
     moves = [
         ("forward", args.forward_speed, 0.0, 0.0),
         ("back", -args.back_speed, 0.0, 0.0),
@@ -68,50 +76,54 @@ def main() -> None:
         ("right", 0.0, -args.lateral_speed, 0.0),
     ]
 
-    dog = ZsibotClient(
-        dog_ip=args.host,
-        local_ip=local_ip,
-        local_port=43988,
-        variant=args.variant,
-    )
     try:
+        import ff_sdk
+        from ff_sdk import Config
+    except ModuleNotFoundError as exc:
+        raise RuntimeError("Install the updated ff_sdk wheel before running this command.") from exc
+
+    os.environ["FF_SDK_D1_HOST"] = args.host
+    os.environ["FF_SDK_D1_VARIANT"] = args.variant
+
+    sess = None
+    try:
+        sess = await ff_sdk.connect(args.target, config=Config.from_env())
         print("sequence=stand_forward_back_left_right")
+        print(f"robot_target={args.target}")
         print(f"robot_host={args.host}")
-        print(f"local_ip={local_ip}")
         print(f"variant={args.variant}")
-        connected = dog.connect(settle_timeout=5.0)
-        print(f"connected={connected}")
-        if not connected:
-            raise RuntimeError("zsibot backend did not connect")
+        if args.local_ip:
+            print(f"local_ip_ignored={args.local_ip}")
+        print("connected=true")
 
-        print(f"battery={dog.battery()}")
-        print(f"initial_mode={dog.ctrl_mode()}")
+        print(f"battery={jsonable(await sess.state.battery())}")
+        print(f"initial_status={jsonable(await sess.state.status())}")
 
-        print(">> stand_up")
-        print(f"stand_up_ret={dog.stand_up()}")
-        time.sleep(args.stand_wait)
-        print(f"mode_after_stand={dog.ctrl_mode()}")
+        print(">> stand")
+        print(f"stand_ret={jsonable(await sess.motion.stand())}")
+        await asyncio.sleep(args.stand_wait)
+        print(f"status_after_stand={jsonable(await sess.state.status())}")
 
         print(">> zero warmup")
-        zero_velocity(dog, args.warmup_seconds)
+        await zero_velocity(sess, args.warmup_seconds)
 
         for label, vx, vy, yaw in moves:
-            stream_move(
-                dog,
+            await stream_move(
+                sess,
                 label=label,
                 vx=vx,
                 vy=vy,
                 yaw=yaw,
                 seconds=args.move_seconds,
             )
-            zero_velocity(dog, args.zero_seconds)
+            await zero_velocity(sess, args.zero_seconds)
 
-        print(f"final_mode={dog.ctrl_mode()}")
-        print(f"final_position={dog.position()}")
-        print(f"final_velocity={dog.world_velocity()}")
+        print(f"final_status={jsonable(await sess.state.status())}")
+        print(f"final_pose={jsonable(await sess.state.pose())}")
     finally:
-        dog.close()
+        if sess is not None:
+            await sess.close()
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())

@@ -1,0 +1,521 @@
+{
+  "source": "combined_charuco_calibration_refined_good_images",
+  "image_width": 1920,
+  "image_height": 1080,
+  "board": {
+    "dictionary": "DICT_4X4_50",
+    "squares_x": 7,
+    "squares_y": 10,
+    "square_length_m": 0.025,
+    "marker_length_m": 0.018
+  },
+  "input_raw_image_count": 25,
+  "detector_good_count": 25,
+  "accepted_count": 23,
+  "rejected_count": 2,
+  "rejected": [
+    {
+      "image": "charuco_runs\\ipad_test_20260613_163909\\ipad_charuco_capture.jpg",
+      "markers": 34,
+      "charuco_corners": 50,
+      "bbox": [
+        833.861572265625,
+        367.12335205078125,
+        1056.69189453125,
+        701.302490234375
+      ],
+      "usable": true,
+      "reason": "high_reprojection_outlier",
+      "mean_error_px": 0.2263212352991104,
+      "max_error_px": 0.8456143736839294
+    },
+    {
+      "image": "charuco_runs\\ipad_test_20260613_164214\\ipad_charuco_capture.jpg",
+      "markers": 35,
+      "charuco_corners": 54,
+      "bbox": [
+        833.804443359375,
+        366.9044189453125,
+        1056.7530517578125,
+        700.5557250976562
+      ],
+      "usable": true,
+      "reason": "high_reprojection_outlier",
+      "mean_error_px": 0.24151809513568878,
+      "max_error_px": 1.4435986280441284
+    }
+  ],
+  "coverage": {
+    "min_x": 382.38134765625,
+    "max_x": 1656.7686767578125,
+    "min_y": 114.10690307617188,
+    "max_y": 886.319091796875,
+    "width_fraction": 0.6637433767318726,
+    "height_fraction": 0.7150112390518188
+  },
+  "coverage_grid_4x4_counts": [
+    [
+      0,
+      123,
+      195,
+      8
+    ],
+    [
+      3,
+      73,
+      226,
+      28
+    ],
+    [
+      16,
+      94,
+      142,
+      28
+    ],
+    [
+      3,
+      23,
+      7,
+      0
+    ]
+  ],
+  "weak_coverage_cells_lt20_points": [
+    {
+      "row": 1,
+      "col": 1,
+      "count": 0
+    },
+    {
+      "row": 1,
+      "col": 4,
+      "count": 8
+    },
+    {
+      "row": 2,
+      "col": 1,
+      "count": 3
+    },
+    {
+      "row": 3,
+      "col": 1,
+      "count": 16
+    },
+    {
+      "row": 4,
+      "col": 1,
+      "count": 3
+    },
+    {
+      "row": 4,
+      "col": 3,
+      "count": 7
+    },
+    {
+      "row": 4,
+      "col": 4,
+      "count": 0
+    }
+  ],
+  "selected_model": "standard_5_coeff_refined_charuco_corners",
+  "rms_reprojection_error_px": 0.17399434768802327,
+  "mean_point_error_px": 0.1504423492973751,
+  "median_point_error_px": 0.13440567255020142,
+  "p95_point_error_px": 0.32195191383361804,
+  "max_point_error_px": 0.5746297836303711,
+  "camera_matrix": [
+    [
+      795.3714978926973,
+      0.0,
+      959.5173856812308
+    ],
+    [
+      0.0,
+      795.5266103946067,
+      563.7401952587998
+    ],
+    [
+      0.0,
+      0.0,
+      1.0
+    ]
+  ],
+  "distortion_coefficients": [
+    -0.11099892224343084,
+    0.01766643955897812,
+    -0.00023359189378946706,
+    -0.0001222567090647121,
+    -0.0019593781412647537
+  ],
+  "new_camera_matrix": [
+    [
+      594.2668881700948,
+      0.0,
+      957.9944355512569
+    ],
+    [
+      0.0,
+      598.8464542496441,
+      568.0268862177797
+    ],
+    [
+      0.0,
+      0.0,
+      1.0
+    ]
+  ],
+  "roi": [
+    89,
+    118,
+    1739,
+    858
+  ],
+  "horizontal_fov_deg": 100.71568965098827,
+  "vertical_fov_deg": 68.33698001953165,
+  "per_view_errors": [
+    {
+      "image": "charuco_runs\\board_moved_20260613_170507\\center_left_02.jpg",
+      "markers": 20,
+      "charuco_corners": 18,
+      "bbox": [
+        707.1920166015625,
+        207.87716674804688,
+        826.7962036132812,
+        388.70794677734375
+      ],
+      "usable": true,
+      "mean_error_px": 0.12139037996530533,
+      "max_error_px": 0.24725595116615295
+    },
+    {
+      "image": "charuco_runs\\board_moved_20260613_170822\\right_side_03.jpg",
+      "markers": 35,
+      "charuco_corners": 54,
+      "bbox": [
+        1220.33544921875,
+        239.86932373046875,
+        1525.768310546875,
+        658.0143432617188
+      ],
+      "usable": true,
+      "mean_error_px": 0.22531282901763916,
+      "max_error_px": 0.5746297836303711
+    },
+    {
+      "image": "charuco_runs\\board_moved_20260613_171243\\lower_04.jpg",
+      "markers": 35,
+      "charuco_corners": 54,
+      "bbox": [
+        1273.62890625,
+        481.2528991699219,
+        1491.2696533203125,
+        770.5137329101562
+      ],
+      "usable": true,
+      "mean_error_px": 0.15007436275482178,
+      "max_error_px": 0.3779219090938568
+    },
+    {
+      "image": "charuco_runs\\board_moved_20260613_171549\\upper_right_05.jpg",
+      "markers": 32,
+      "charuco_corners": 43,
+      "bbox": [
+        1203.708251953125,
+        114.33350372314453,
+        1365.4058837890625,
+        373.3949279785156
+      ],
+      "usable": true,
+      "mean_error_px": 0.1284443587064743,
+      "max_error_px": 0.3333456516265869
+    },
+    {
+      "image": "charuco_runs\\board_moved_20260613_171941\\close_06.jpg",
+      "markers": 35,
+      "charuco_corners": 54,
+      "bbox": [
+        1323.5301513671875,
+        186.9910888671875,
+        1656.7686767578125,
+        656.6627197265625
+      ],
+      "usable": true,
+      "mean_error_px": 0.15065103769302368,
+      "max_error_px": 0.45423269271850586
+    },
+    {
+      "image": "charuco_runs\\board_moved_20260613_172303\\far_07.jpg",
+      "markers": 34,
+      "charuco_corners": 50,
+      "bbox": [
+        1277.7476806640625,
+        473.7712097167969,
+        1405.6619873046875,
+        664.8324584960938
+      ],
+      "usable": true,
+      "mean_error_px": 0.12546464800834656,
+      "max_error_px": 0.254817932844162
+    },
+    {
+      "image": "charuco_runs\\board_moved_20260613_173833\\far_left_retry_09.jpg",
+      "markers": 18,
+      "charuco_corners": 12,
+      "bbox": [
+        616.742431640625,
+        155.99705505371094,
+        732.337158203125,
+        324.998291015625
+      ],
+      "usable": true,
+      "mean_error_px": 0.13847513496875763,
+      "max_error_px": 0.28143811225891113
+    },
+    {
+      "image": "charuco_runs\\board_moved_20260613_174403\\bottom_center_10.jpg",
+      "markers": 34,
+      "charuco_corners": 52,
+      "bbox": [
+        759.6707763671875,
+        659.9069213867188,
+        903.8976440429688,
+        886.319091796875
+      ],
+      "usable": true,
+      "mean_error_px": 0.1336381882429123,
+      "max_error_px": 0.40681159496307373
+    },
+    {
+      "image": "charuco_runs\\board_moved_20260613_182237\\lower_right_retry_18.jpg",
+      "markers": 35,
+      "charuco_corners": 54,
+      "bbox": [
+        1189.876953125,
+        462.7000732421875,
+        1422.1806640625,
+        822.9089965820312
+      ],
+      "usable": true,
+      "mean_error_px": 0.1561221182346344,
+      "max_error_px": 0.37031131982803345
+    },
+    {
+      "image": "charuco_runs\\board_moved_20260613_182759\\lower_left_retry_18.jpg",
+      "markers": 35,
+      "charuco_corners": 54,
+      "bbox": [
+        382.38134765625,
+        496.47235107421875,
+        625.599853515625,
+        817.678955078125
+      ],
+      "usable": true,
+      "mean_error_px": 0.17173978686332703,
+      "max_error_px": 0.4109613597393036
+    },
+    {
+      "image": "charuco_runs\\ipad_test_20260613_163530\\ipad_charuco_capture.jpg",
+      "markers": 27,
+      "charuco_corners": 31,
+      "bbox": [
+        884.1174926757812,
+        611.0059204101562,
+        1010.2361450195312,
+        811.9357299804688
+      ],
+      "usable": true,
+      "mean_error_px": 0.16239239275455475,
+      "max_error_px": 0.34557679295539856
+    },
+    {
+      "image": "charuco_runs\\robot_moved_20260613_164652\\00_center_stand.jpg",
+      "markers": 35,
+      "charuco_corners": 54,
+      "bbox": [
+        851.3646240234375,
+        406.0851745605469,
+        1070.9981689453125,
+        739.404052734375
+      ],
+      "usable": true,
+      "mean_error_px": 0.17419107258319855,
+      "max_error_px": 0.4110613763332367
+    },
+    {
+      "image": "charuco_runs\\robot_moved_20260613_164652\\01_yaw_left.jpg",
+      "markers": 30,
+      "charuco_corners": 35,
+      "bbox": [
+        915.8742065429688,
+        115.83966827392578,
+        1083.00537109375,
+        345.4897155761719
+      ],
+      "usable": true,
+      "mean_error_px": 0.16989564895629883,
+      "max_error_px": 0.3272906541824341
+    },
+    {
+      "image": "charuco_runs\\robot_moved_20260613_164652\\02_yaw_right.jpg",
+      "markers": 31,
+      "charuco_corners": 40,
+      "bbox": [
+        916.6682739257812,
+        115.15574645996094,
+        1082.9371337890625,
+        344.8455810546875
+      ],
+      "usable": true,
+      "mean_error_px": 0.14009250700473785,
+      "max_error_px": 0.3981500566005707
+    },
+    {
+      "image": "charuco_runs\\robot_moved_20260613_164652\\03_yaw_center.jpg",
+      "markers": 30,
+      "charuco_corners": 41,
+      "bbox": [
+        916.5082397460938,
+        115.05113220214844,
+        1082.83203125,
+        344.5933837890625
+      ],
+      "usable": true,
+      "mean_error_px": 0.1265583038330078,
+      "max_error_px": 0.346108078956604
+    },
+    {
+      "image": "charuco_runs\\robot_moved_20260613_164652\\04_left.jpg",
+      "markers": 31,
+      "charuco_corners": 40,
+      "bbox": [
+        916.552978515625,
+        115.03887176513672,
+        1082.888427734375,
+        344.73321533203125
+      ],
+      "usable": true,
+      "mean_error_px": 0.15878987312316895,
+      "max_error_px": 0.5182236433029175
+    },
+    {
+      "image": "charuco_runs\\robot_moved_20260613_164652\\05_right.jpg",
+      "markers": 31,
+      "charuco_corners": 40,
+      "bbox": [
+        916.5012817382812,
+        114.91402435302734,
+        1082.93408203125,
+        344.5758056640625
+      ],
+      "usable": true,
+      "mean_error_px": 0.12046456336975098,
+      "max_error_px": 0.32004326581954956
+    },
+    {
+      "image": "charuco_runs\\robot_moved_20260613_164652\\06_side_center.jpg",
+      "markers": 33,
+      "charuco_corners": 46,
+      "bbox": [
+        916.5870361328125,
+        114.85626983642578,
+        1082.926513671875,
+        344.4504699707031
+      ],
+      "usable": true,
+      "mean_error_px": 0.1485002189874649,
+      "max_error_px": 0.47824639081954956
+    },
+    {
+      "image": "charuco_runs\\robot_moved_20260613_164652\\07_back_1.jpg",
+      "markers": 31,
+      "charuco_corners": 39,
+      "bbox": [
+        916.6248168945312,
+        114.70320129394531,
+        1082.93212890625,
+        344.5094909667969
+      ],
+      "usable": true,
+      "mean_error_px": 0.1411590725183487,
+      "max_error_px": 0.43267184495925903
+    },
+    {
+      "image": "charuco_runs\\robot_moved_20260613_164652\\08_back_2.jpg",
+      "markers": 33,
+      "charuco_corners": 46,
+      "bbox": [
+        915.96044921875,
+        114.3623046875,
+        1083.4140625,
+        344.6644592285156
+      ],
+      "usable": true,
+      "mean_error_px": 0.14696161448955536,
+      "max_error_px": 0.4244026839733124
+    },
+    {
+      "image": "charuco_runs\\robot_moved_20260613_164652\\09_forward_1.jpg",
+      "markers": 29,
+      "charuco_corners": 37,
+      "bbox": [
+        916.3363647460938,
+        114.25900268554688,
+        1083.4903564453125,
+        344.484375
+      ],
+      "usable": true,
+      "mean_error_px": 0.1612643450498581,
+      "max_error_px": 0.31974321603775024
+    },
+    {
+      "image": "charuco_runs\\robot_moved_20260613_164652\\10_forward_2.jpg",
+      "markers": 30,
+      "charuco_corners": 36,
+      "bbox": [
+        916.3176879882812,
+        114.69168853759766,
+        1083.6153564453125,
+        344.1440124511719
+      ],
+      "usable": true,
+      "mean_error_px": 0.12434703856706619,
+      "max_error_px": 0.311360627412796
+    },
+    {
+      "image": "charuco_runs\\robot_moved_20260613_164652\\11_final_centerish.jpg",
+      "markers": 30,
+      "charuco_corners": 39,
+      "bbox": [
+        916.3170776367188,
+        114.10690307617188,
+        1083.64990234375,
+        344.0691223144531
+      ],
+      "usable": true,
+      "mean_error_px": 0.13298599421977997,
+      "max_error_px": 0.34157028794288635
+    }
+  ],
+  "old_score_reference": {
+    "path": "charuco_runs\\combined_calibration_20260613\\charuco_camera_calibration_combined.json",
+    "input_images": 18,
+    "accepted": 18,
+    "rms_px": 0.17255811375207714,
+    "mean_px": 0.14901793646314923,
+    "p95_px": 0.3216351643204689,
+    "max_px": 0.5741484761238098,
+    "hfov_deg": 100.6121271361262,
+    "vfov_deg": 68.21698616965824,
+    "coverage_width_fraction": 0.49457117915153503,
+    "coverage_height_fraction": 0.6077841520309448
+  },
+  "all_good_unrefined_reference": {
+    "path": "charuco_runs\\combined_calibration_20260613_all_good\\charuco_camera_calibration_all_good.json",
+    "accepted": 26,
+    "rms_px": 0.1898583140553024,
+    "mean_px": 0.15957758362124605,
+    "p95_px": 0.33843163400888443,
+    "max_px": 1.4438201189041138,
+    "coverage_width_fraction": 0.6637433767318726,
+    "coverage_height_fraction": 0.7150112390518188
+  }
+}

@@ -1,0 +1,839 @@
+{
+  "source": "blue_wall_grid_custom_intersections",
+  "image_dir": "camera_level_runs\\blue_grid_combined_clean_20260612_174500",
+  "image_width": 1920,
+  "image_height": 1080,
+  "detected_count": 24,
+  "accepted_count": 13,
+  "rms_reprojection_error": 6.1933646436295255,
+  "per_view_errors": [
+    {
+      "image": "full_grid_standing_20260612_173500__01_yaw_left_small.jpg",
+      "view_error_px": 0.792738556118481
+    },
+    {
+      "image": "full_grid_standing_20260612_173500__02_yaw_right_small.jpg",
+      "view_error_px": 0.7034889053278968
+    },
+    {
+      "image": "full_grid_standing_20260612_173500__03_yaw_center.jpg",
+      "view_error_px": 0.9688442208473454
+    },
+    {
+      "image": "full_grid_standing_20260612_173500__04_left_small.jpg",
+      "view_error_px": 0.8961038016653224
+    },
+    {
+      "image": "full_grid_standing_20260612_173500__06_side_center.jpg",
+      "view_error_px": 1.2450673724852739
+    },
+    {
+      "image": "moving_grid_combined_20260612_171000__big_02_back_2.jpg",
+      "view_error_px": 0.8754463276382008
+    },
+    {
+      "image": "moving_grid_combined_20260612_171000__big_04_right_2.jpg",
+      "view_error_px": 1.1648444829351827
+    },
+    {
+      "image": "moving_grid_combined_20260612_171000__more_00_start.jpg",
+      "view_error_px": 0.49617123873764374
+    },
+    {
+      "image": "moving_grid_combined_20260612_171000__more_01_back_more.jpg",
+      "view_error_px": 0.42162177116056654
+    },
+    {
+      "image": "moving_grid_combined_20260612_171000__more_03_yaw_right_more.jpg",
+      "view_error_px": 0.8079090638391269
+    },
+    {
+      "image": "moving_grid_combined_20260612_171000__more_04_center_yaw.jpg",
+      "view_error_px": 0.5071575644792609
+    },
+    {
+      "image": "moving_grid_combined_20260612_171000__more_06_right_more.jpg",
+      "view_error_px": 1.229524472556674
+    },
+    {
+      "image": "moving_grid_combined_20260612_171000__more_07_center_side.jpg",
+      "view_error_px": 0.5289247830600484
+    }
+  ],
+  "prune_log": [
+    {
+      "removed": "full_grid_standing_20260612_173500__00_stand_center.jpg",
+      "view_error_px": 24.506059698162858,
+      "rms_before_remove": 51.42254940046194
+    },
+    {
+      "removed": "moving_grid_combined_20260612_171000__big_01_back_1.jpg",
+      "view_error_px": 10.193485929308896,
+      "rms_before_remove": 21.742352779002296
+    },
+    {
+      "removed": "moving_grid_combined_20260612_171000__big_06_yaw_left.jpg",
+      "view_error_px": 6.32648717564656,
+      "rms_before_remove": 17.80812258715042
+    },
+    {
+      "removed": "moving_grid_combined_20260612_171000__more_05_left_more.jpg",
+      "view_error_px": 5.911286641456069,
+      "rms_before_remove": 15.379161366192653
+    },
+    {
+      "removed": "moving_grid_combined_20260612_171000__big_08_centerish_yaw.jpg",
+      "view_error_px": 2.8230845918562157,
+      "rms_before_remove": 10.21464501052704
+    },
+    {
+      "removed": "moving_grid_combined_20260612_171000__more_02_yaw_left_more.jpg",
+      "view_error_px": 2.215080613332662,
+      "rms_before_remove": 9.467767338688608
+    },
+    {
+      "removed": "moving_grid_combined_20260612_171000__big_05_centerish.jpg",
+      "view_error_px": 1.9346183844914435,
+      "rms_before_remove": 8.499129301739213
+    },
+    {
+      "removed": "moving_grid_combined_20260612_171000__big_03_left_1.jpg",
+      "view_error_px": 1.8706729127860113,
+      "rms_before_remove": 8.113468614484619
+    },
+    {
+      "removed": "full_grid_standing_20260612_173500__08_forward_center.jpg",
+      "view_error_px": 1.7118990724251966,
+      "rms_before_remove": 7.51424757460454
+    },
+    {
+      "removed": "full_grid_standing_20260612_173500__07_back_small.jpg",
+      "view_error_px": 1.686219198427428,
+      "rms_before_remove": 7.2162411276490035
+    },
+    {
+      "removed": "full_grid_standing_20260612_173500__05_right_small.jpg",
+      "view_error_px": 1.515037786598236,
+      "rms_before_remove": 6.57079853113797
+    }
+  ],
+  "camera_matrix": [
+    [
+      833.4552102112146,
+      0.0,
+      881.4547771636705
+    ],
+    [
+      0.0,
+      829.7342645114983,
+      589.6720336490498
+    ],
+    [
+      0.0,
+      0.0,
+      1.0
+    ]
+  ],
+  "distortion_coefficients": [
+    -2.7122029254514186,
+    2.0782233908687857,
+    0.0,
+    0.0,
+    -0.16362453696988824,
+    -2.617301875782337,
+    1.837380740068145,
+    -9.334915339184909e-05,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+  ],
+  "new_camera_matrix": [
+    [
+      607.1762686717595,
+      0.0,
+      766.5364954743891
+    ],
+    [
+      0.0,
+      653.6521267426691,
+      621.3051953715119
+    ],
+    [
+      0.0,
+      0.0,
+      1.0
+    ]
+  ],
+  "roi": [
+    35,
+    127,
+    1694,
+    895
+  ],
+  "horizontal_fov_deg": 98.07211211620853,
+  "vertical_fov_deg": 66.11302410339607,
+  "model": "rational_zero_tangent",
+  "flags": [
+    "CALIB_RATIONAL_MODEL",
+    "CALIB_ZERO_TANGENT_DIST"
+  ],
+  "records": [
+    {
+      "vertical_centers": [
+        128.76,
+        467.59,
+        606.44,
+        740.35,
+        882.23,
+        1029.14,
+        1172.59,
+        1329.21
+      ],
+      "horizontal_centers": [
+        88.12,
+        178.81,
+        279.0,
+        395.79,
+        529.32,
+        669.13,
+        819.96,
+        989.0
+      ],
+      "accepted": true,
+      "shape": [
+        8,
+        8
+      ],
+      "image": "camera_level_runs\\blue_grid_combined_clean_20260612_174500\\full_grid_standing_20260612_173500__00_stand_center.jpg"
+    },
+    {
+      "vertical_centers": [
+        595.72,
+        712.97,
+        844.67,
+        987.4,
+        1138.77,
+        1288.82,
+        1467.37
+      ],
+      "horizontal_centers": [
+        51.77,
+        155.28,
+        265.38,
+        384.99,
+        521.9,
+        665.87,
+        820.85,
+        993.6
+      ],
+      "accepted": true,
+      "shape": [
+        8,
+        7
+      ],
+      "image": "camera_level_runs\\blue_grid_combined_clean_20260612_174500\\full_grid_standing_20260612_173500__01_yaw_left_small.jpg"
+    },
+    {
+      "vertical_centers": [
+        37.99,
+        199.79,
+        353.36,
+        528.02,
+        679.91,
+        835.08,
+        982.05,
+        1126.0
+      ],
+      "horizontal_centers": [
+        56.01,
+        149.21,
+        252.28,
+        373.64,
+        512.43,
+        657.73,
+        814.47,
+        990.31
+      ],
+      "accepted": true,
+      "shape": [
+        8,
+        8
+      ],
+      "image": "camera_level_runs\\blue_grid_combined_clean_20260612_174500\\full_grid_standing_20260612_173500__02_yaw_right_small.jpg"
+    },
+    {
+      "vertical_centers": [
+        138.43,
+        295.33,
+        447.04,
+        606.76,
+        754.44,
+        907.25,
+        1053.99,
+        1200.04
+      ],
+      "horizontal_centers": [
+        54.61,
+        147.32,
+        250.05,
+        370.19,
+        507.87,
+        651.75,
+        806.79
+      ],
+      "accepted": true,
+      "shape": [
+        7,
+        8
+      ],
+      "image": "camera_level_runs\\blue_grid_combined_clean_20260612_174500\\full_grid_standing_20260612_173500__03_yaw_center.jpg"
+    },
+    {
+      "vertical_centers": [
+        105.34,
+        270.56,
+        431.11,
+        597.04,
+        749.97,
+        905.42,
+        1053.15,
+        1197.89
+      ],
+      "horizontal_centers": [
+        49.21,
+        142.63,
+        246.22,
+        368.27,
+        508.28,
+        654.63,
+        812.41
+      ],
+      "accepted": true,
+      "shape": [
+        7,
+        8
+      ],
+      "image": "camera_level_runs\\blue_grid_combined_clean_20260612_174500\\full_grid_standing_20260612_173500__04_left_small.jpg"
+    },
+    {
+      "vertical_centers": [
+        119.53,
+        284.58,
+        463.31,
+        633.84,
+        791.64,
+        949.63
+      ],
+      "horizontal_centers": [
+        11.55,
+        89.42,
+        196.35,
+        322.44,
+        467.78,
+        620.33,
+        785.14,
+        968.64
+      ],
+      "accepted": true,
+      "shape": [
+        8,
+        6
+      ],
+      "image": "camera_level_runs\\blue_grid_combined_clean_20260612_174500\\full_grid_standing_20260612_173500__05_right_small.jpg"
+    },
+    {
+      "vertical_centers": [
+        141.19,
+        321.81,
+        522.85,
+        697.0,
+        863.35,
+        1026.31
+      ],
+      "horizontal_centers": [
+        70.79,
+        178.4,
+        306.81,
+        456.54,
+        615.32,
+        789.47,
+        984.92
+      ],
+      "accepted": true,
+      "shape": [
+        7,
+        6
+      ],
+      "image": "camera_level_runs\\blue_grid_combined_clean_20260612_174500\\full_grid_standing_20260612_173500__06_side_center.jpg"
+    },
+    {
+      "vertical_centers": [
+        22.01,
+        167.95,
+        350.51,
+        533.41,
+        700.49,
+        861.07,
+        1019.39
+      ],
+      "horizontal_centers": [
+        21.29,
+        114.27,
+        220.48,
+        346.72,
+        493.61,
+        649.09,
+        818.51,
+        1009.74
+      ],
+      "accepted": true,
+      "shape": [
+        8,
+        7
+      ],
+      "image": "camera_level_runs\\blue_grid_combined_clean_20260612_174500\\full_grid_standing_20260612_173500__07_back_small.jpg"
+    },
+    {
+      "vertical_centers": [
+        22.1,
+        166.98,
+        354.18,
+        539.27,
+        712.7,
+        880.16,
+        1045.88
+      ],
+      "horizontal_centers": [
+        73.17,
+        181.66,
+        311.26,
+        462.47,
+        622.47,
+        797.29
+      ],
+      "accepted": true,
+      "shape": [
+        6,
+        7
+      ],
+      "image": "camera_level_runs\\blue_grid_combined_clean_20260612_174500\\full_grid_standing_20260612_173500__08_forward_center.jpg"
+    },
+    {
+      "vertical_centers": [
+        68.89,
+        296.43,
+        531.44,
+        799.97,
+        1107.02,
+        1411.89
+      ],
+      "horizontal_centers": [],
+      "accepted": false,
+      "image": "camera_level_runs\\blue_grid_combined_clean_20260612_174500\\moving_grid_combined_20260612_171000__big_00_start.jpg"
+    },
+    {
+      "vertical_centers": [
+        40.32,
+        195.12,
+        381.05,
+        588.65,
+        804.18,
+        1040.15,
+        1274.54,
+        1516.62
+      ],
+      "horizontal_centers": [
+        76.65,
+        410.87,
+        621.99,
+        863.94,
+        1061.3
+      ],
+      "accepted": true,
+      "shape": [
+        5,
+        8
+      ],
+      "image": "camera_level_runs\\blue_grid_combined_clean_20260612_174500\\moving_grid_combined_20260612_171000__big_01_back_1.jpg"
+    },
+    {
+      "vertical_centers": [
+        130.22,
+        292.38,
+        459.89,
+        633.47,
+        805.47,
+        985.82,
+        1162.4,
+        1339.77
+      ],
+      "horizontal_centers": [
+        70.5,
+        181.13,
+        313.91,
+        470.06,
+        637.86,
+        822.21,
+        1029.81
+      ],
+      "accepted": true,
+      "shape": [
+        7,
+        8
+      ],
+      "image": "camera_level_runs\\blue_grid_combined_clean_20260612_174500\\moving_grid_combined_20260612_171000__big_02_back_2.jpg"
+    },
+    {
+      "vertical_centers": [
+        141.01,
+        348.27,
+        536.49,
+        713.01,
+        897.87,
+        1082.81,
+        1256.08,
+        1439.58
+      ],
+      "horizontal_centers": [
+        64.45,
+        175.06,
+        309.2,
+        468.12,
+        639.06,
+        827.36,
+        1041.54
+      ],
+      "accepted": true,
+      "shape": [
+        7,
+        8
+      ],
+      "image": "camera_level_runs\\blue_grid_combined_clean_20260612_174500\\moving_grid_combined_20260612_171000__big_03_left_1.jpg"
+    },
+    {
+      "vertical_centers": [
+        147.64,
+        316.31,
+        512.28,
+        695.62,
+        880.62,
+        1071.99
+      ],
+      "horizontal_centers": [
+        42.46,
+        154.81,
+        290.73,
+        451.87,
+        626.66,
+        820.73
+      ],
+      "accepted": true,
+      "shape": [
+        6,
+        6
+      ],
+      "image": "camera_level_runs\\blue_grid_combined_clean_20260612_174500\\moving_grid_combined_20260612_171000__big_04_right_2.jpg"
+    },
+    {
+      "vertical_centers": [
+        76.79,
+        270.94,
+        475.02,
+        665.39,
+        865.7,
+        1059.99,
+        1252.91
+      ],
+      "horizontal_centers": [
+        31.67,
+        145.29,
+        284.71,
+        452.22,
+        635.84,
+        840.48,
+        1049.58
+      ],
+      "accepted": true,
+      "shape": [
+        7,
+        7
+      ],
+      "image": "camera_level_runs\\blue_grid_combined_clean_20260612_174500\\moving_grid_combined_20260612_171000__big_05_centerish.jpg"
+    },
+    {
+      "vertical_centers": [
+        472.53,
+        630.51,
+        788.46,
+        971.79,
+        1176.49,
+        1388.59,
+        1620.62,
+        1882.49
+      ],
+      "horizontal_centers": [
+        116.88,
+        265.98,
+        437.38,
+        627.37,
+        839.38,
+        1039.93
+      ],
+      "accepted": true,
+      "shape": [
+        6,
+        8
+      ],
+      "image": "camera_level_runs\\blue_grid_combined_clean_20260612_174500\\moving_grid_combined_20260612_171000__big_06_yaw_left.jpg"
+    },
+    {
+      "vertical_centers": [],
+      "horizontal_centers": [],
+      "accepted": false,
+      "image": "camera_level_runs\\blue_grid_combined_clean_20260612_174500\\moving_grid_combined_20260612_171000__big_07_yaw_right.jpg"
+    },
+    {
+      "vertical_centers": [
+        56.72,
+        239.23,
+        455.54,
+        661.57,
+        870.9,
+        1074.93,
+        1278.13
+      ],
+      "horizontal_centers": [
+        13.63,
+        127.0,
+        269.47,
+        442.33,
+        632.97,
+        847.59,
+        1042.44
+      ],
+      "accepted": true,
+      "shape": [
+        7,
+        7
+      ],
+      "image": "camera_level_runs\\blue_grid_combined_clean_20260612_174500\\moving_grid_combined_20260612_171000__big_08_centerish_yaw.jpg"
+    },
+    {
+      "vertical_centers": [
+        394.24,
+        546.95,
+        698.23,
+        847.72,
+        997.35,
+        1138.04,
+        1276.45
+      ],
+      "horizontal_centers": [
+        48.67,
+        141.44,
+        243.07,
+        363.78,
+        497.39,
+        638.17,
+        789.1
+      ],
+      "accepted": true,
+      "shape": [
+        7,
+        7
+      ],
+      "image": "camera_level_runs\\blue_grid_combined_clean_20260612_174500\\moving_grid_combined_20260612_171000__more_00_start.jpg"
+    },
+    {
+      "vertical_centers": [
+        492.36,
+        606.39,
+        721.87,
+        839.12,
+        955.14,
+        1062.52,
+        1169.36
+      ],
+      "horizontal_centers": [
+        166.66,
+        250.19,
+        338.81,
+        439.62,
+        550.62,
+        662.46,
+        780.02,
+        909.91
+      ],
+      "accepted": true,
+      "shape": [
+        8,
+        7
+      ],
+      "image": "camera_level_runs\\blue_grid_combined_clean_20260612_174500\\moving_grid_combined_20260612_171000__more_01_back_more.jpg"
+    },
+    {
+      "vertical_centers": [
+        851.21,
+        953.23,
+        1064.18,
+        1183.38,
+        1307.64,
+        1438.63,
+        1585.26,
+        1697.4
+      ],
+      "horizontal_centers": [
+        159.39,
+        254.9,
+        343.57,
+        445.82,
+        564.97,
+        682.54,
+        805.9,
+        941.82
+      ],
+      "accepted": true,
+      "shape": [
+        8,
+        8
+      ],
+      "image": "camera_level_runs\\blue_grid_combined_clean_20260612_174500\\moving_grid_combined_20260612_171000__more_02_yaw_left_more.jpg"
+    },
+    {
+      "vertical_centers": [
+        36.96,
+        198.54,
+        368.08,
+        528.72,
+        662.49,
+        779.9
+      ],
+      "horizontal_centers": [
+        370.12,
+        522.3,
+        652.74,
+        789.3,
+        939.21
+      ],
+      "accepted": true,
+      "shape": [
+        5,
+        6
+      ],
+      "image": "camera_level_runs\\blue_grid_combined_clean_20260612_174500\\moving_grid_combined_20260612_171000__more_03_yaw_right_more.jpg"
+    },
+    {
+      "vertical_centers": [
+        400.49,
+        538.42,
+        673.44,
+        799.95,
+        923.86,
+        1039.45,
+        1151.37
+      ],
+      "horizontal_centers": [
+        161.32,
+        249.57,
+        340.32,
+        445.13,
+        561.14,
+        679.75,
+        805.35,
+        944.89
+      ],
+      "accepted": true,
+      "shape": [
+        8,
+        7
+      ],
+      "image": "camera_level_runs\\blue_grid_combined_clean_20260612_174500\\moving_grid_combined_20260612_171000__more_04_center_yaw.jpg"
+    },
+    {
+      "vertical_centers": [
+        570.58,
+        700.58,
+        832.86,
+        963.47,
+        1089.38,
+        1199.98,
+        1335.99,
+        1597.75
+      ],
+      "horizontal_centers": [
+        121.47,
+        211.97,
+        305.52,
+        414.66,
+        535.64,
+        659.27,
+        790.17,
+        936.69
+      ],
+      "accepted": true,
+      "shape": [
+        8,
+        8
+      ],
+      "image": "camera_level_runs\\blue_grid_combined_clean_20260612_174500\\moving_grid_combined_20260612_171000__more_05_left_more.jpg"
+    },
+    {
+      "vertical_centers": [
+        22.2,
+        148.15,
+        274.26,
+        418.4,
+        563.87,
+        697.67,
+        828.11,
+        955.91
+      ],
+      "horizontal_centers": [
+        103.65,
+        192.51,
+        288.47,
+        398.94,
+        522.48,
+        649.16,
+        783.4,
+        932.05
+      ],
+      "accepted": true,
+      "shape": [
+        8,
+        8
+      ],
+      "image": "camera_level_runs\\blue_grid_combined_clean_20260612_174500\\moving_grid_combined_20260612_171000__more_06_right_more.jpg"
+    },
+    {
+      "vertical_centers": [
+        297.27,
+        438.25,
+        593.12,
+        737.13,
+        881.42,
+        1015.93,
+        1147.65
+      ],
+      "horizontal_centers": [
+        76.65,
+        168.28,
+        267.97,
+        383.96,
+        514.62,
+        649.66,
+        793.87,
+        955.25
+      ],
+      "accepted": true,
+      "shape": [
+        8,
+        7
+      ],
+      "image": "camera_level_runs\\blue_grid_combined_clean_20260612_174500\\moving_grid_combined_20260612_171000__more_07_center_side.jpg"
+    }
+  ]
+}

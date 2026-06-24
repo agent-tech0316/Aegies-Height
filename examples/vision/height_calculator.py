@@ -27,8 +27,8 @@ from pathlib import Path
 
 DEFAULT_RTSP_URL = "rtsp://192.168.234.1:8554/test"
 DEFAULT_MODEL = "models/yolov8n.onnx"
-DEFAULT_HCSR04_TRIGGER_PIN = 23
-DEFAULT_HCSR04_ECHO_PIN = 24
+DEFAULT_HCSR04_TRIGGER_PIN = 17
+DEFAULT_HCSR04_ECHO_PIN = 27
 
 
 @dataclass(frozen=True)
@@ -195,6 +195,129 @@ def estimate_height_from_box_calibration(
         "focal_length_y_px": float(camera_matrix[1, 1]),
         "principal_point_x_px": float(camera_matrix[0, 2]),
         "principal_point_y_px": float(camera_matrix[1, 2]),
+        "person_height_cm": abs(height_cm),
+        "person_height_in": abs(height_cm) / 2.54,
+    }
+
+
+def vertical_ray_deg_from_pixel_calibration(
+    *,
+    x: float,
+    y: float,
+    image_width: int,
+    image_height: int,
+    calibration: CameraCalibration,
+    camera_pitch_deg: float,
+) -> dict[str, float | list[float]]:
+    cv2, np = require_cv2_numpy()
+    camera_matrix, distortion = scaled_camera_matrix_for_image(
+        calibration=calibration,
+        image_width=image_width,
+        image_height=image_height,
+    )
+    sample_point = np.asarray([[[x, y]]], dtype=np.float64)
+    normalized = cv2.undistortPoints(sample_point, camera_matrix, distortion).reshape(-1, 2)[0]
+    norm_y = float(normalized[1])
+    ray_deg = camera_pitch_deg + math.degrees(math.atan(-norm_y))
+    return {
+        "pixel_x": float(x),
+        "pixel_y": float(y),
+        "camera_pitch_deg": camera_pitch_deg,
+        "ray_world_deg": ray_deg,
+        "undistorted_normalized_xy": [float(normalized[0]), norm_y],
+        "focal_length_x_px": float(camera_matrix[0, 0]),
+        "focal_length_y_px": float(camera_matrix[1, 1]),
+        "principal_point_x_px": float(camera_matrix[0, 2]),
+        "principal_point_y_px": float(camera_matrix[1, 2]),
+    }
+
+
+def pixel_y_for_vertical_ray_deg_calibration(
+    *,
+    local_ray_deg: float,
+    image_width: int,
+    image_height: int,
+    calibration: CameraCalibration,
+) -> dict[str, float | list[float]]:
+    """Project a camera-local vertical ray angle back to an image row near center.
+
+    `local_ray_deg` is relative to the camera optical axis, not world/floor level.
+    Positive means the ray points upward in the image geometry used by
+    `vertical_ray_deg_from_pixel_calibration`.
+    """
+    cv2, np = require_cv2_numpy()
+    camera_matrix, distortion = scaled_camera_matrix_for_image(
+        calibration=calibration,
+        image_width=image_width,
+        image_height=image_height,
+    )
+    normalized_y = -math.tan(math.radians(local_ray_deg))
+    object_points = np.asarray([[[0.0, normalized_y, 1.0]]], dtype=np.float64)
+    image_points, _jacobian = cv2.projectPoints(
+        object_points,
+        np.zeros((3, 1), dtype=np.float64),
+        np.zeros((3, 1), dtype=np.float64),
+        camera_matrix,
+        distortion,
+    )
+    point = image_points.reshape(-1, 2)[0]
+    return {
+        "local_ray_deg": float(local_ray_deg),
+        "pixel_x": float(point[0]),
+        "pixel_y": float(point[1]),
+        "undistorted_normalized_xy": [0.0, float(normalized_y)],
+        "focal_length_x_px": float(camera_matrix[0, 0]),
+        "focal_length_y_px": float(camera_matrix[1, 1]),
+        "principal_point_x_px": float(camera_matrix[0, 2]),
+        "principal_point_y_px": float(camera_matrix[1, 2]),
+    }
+
+
+def estimate_height_from_split_tilt_calibration(
+    *,
+    top_person: PersonBox,
+    bottom_person: PersonBox,
+    top_image_width: int,
+    top_image_height: int,
+    bottom_image_width: int,
+    bottom_image_height: int,
+    distance_cm: float,
+    calibration: CameraCalibration,
+    top_camera_pitch_deg: float,
+    bottom_camera_pitch_deg: float,
+) -> dict[str, float | str | list[float] | dict[str, float | list[float]]]:
+    """Estimate height from two views: head in the top-tilt frame, feet in the bottom-tilt frame."""
+    head_ray = vertical_ray_deg_from_pixel_calibration(
+        x=top_person.center_x,
+        y=top_person.top_y,
+        image_width=top_image_width,
+        image_height=top_image_height,
+        calibration=calibration,
+        camera_pitch_deg=top_camera_pitch_deg,
+    )
+    foot_ray = vertical_ray_deg_from_pixel_calibration(
+        x=bottom_person.center_x,
+        y=bottom_person.bottom_y,
+        image_width=bottom_image_width,
+        image_height=bottom_image_height,
+        calibration=calibration,
+        camera_pitch_deg=bottom_camera_pitch_deg,
+    )
+    head_ray_deg = float(head_ray["ray_world_deg"])
+    foot_ray_deg = float(foot_ray["ray_world_deg"])
+    height_cm = distance_cm * (
+        math.tan(math.radians(head_ray_deg)) - math.tan(math.radians(foot_ray_deg))
+    )
+    return {
+        "height_method": "split_tilt_opencv_camera_calibration",
+        "camera_calibration": calibration.source or "",
+        "top_camera_pitch_deg": top_camera_pitch_deg,
+        "bottom_camera_pitch_deg": bottom_camera_pitch_deg,
+        "top_ray_world_deg": head_ray_deg,
+        "bottom_ray_world_deg": foot_ray_deg,
+        "angular_span_deg": head_ray_deg - foot_ray_deg,
+        "head_ray": head_ray,
+        "foot_ray": foot_ray,
         "person_height_cm": abs(height_cm),
         "person_height_in": abs(height_cm) / 2.54,
     }

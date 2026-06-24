@@ -33,9 +33,6 @@ aegis_devkit/
 │   ├── QUICKSTART.md          ← 零基础 5 分钟上手（不需要真机）
 │   ├── GLOSSARY.md            ← 名词表（Capability / dry-run / e_stop …）
 │   ├── getting_started.md     ← 进阶入门（配置 / 诊断 / 紧急停止）
-│   ├── camera_height_workflow.md ← ★ 相机标定 + 倾斜测高流程
-│   ├── dog_testing_runbook.md ← ★ 今日测试命令（SSH / 标定 / 倾斜探测）
-│   ├── accepted_laser_images_cleanup.md ← ★ 保留64张可用激光图并传到电脑
 │   ├── d1_models.md           ← ★ Aegis 机型适配指南（EDU / Ultra / 点足 / 轮足）
 │   └── deployment.md          ← ★ 部署指南（程序上机器人 / 开机自启 / 升级）
 ├── examples/                  ← Python 示例
@@ -46,10 +43,6 @@ aegis_devkit/
 │   │   ├── udp_walk.py        ← Aegis 完整行走演示（站立 → 前进 → 转向 → 阻尼）
 │   │   └── presets_and_telemetry.py  ← ★ 机型选择 + 特技 + 关节遥测
 │   ├── motion/                ← 速度控制 / 预设动作 / 起立阻尼
-│   ├── vision/
-│   │   ├── grid_laser_calibration.py ← ★ 墙面网格 + 激光点相机标定
-│   │   ├── height_calculator.py ← ★ YOLO/OpenCV 身高估计辅助
-│   │   └── tilt_telemetry_probe.py ← ★ 机器人倾斜遥测探测
 │   ├── state/                 ← 电量 / 状态监听
 │   └── cookbook/              ← 场景菜谱（安全看门狗 / 多机并发 / 轨迹记录 …）
 ├── wheels/                    ← ★ Python 安装包（aarch64 机器人 + x86_64 开发机）
@@ -137,10 +130,8 @@ FF_SDK_D1_VARIANT=zsl-1w python examples/d1/udp_walk.py    # 轮足（默认）
 3. [docs/d1_models.md](docs/d1_models.md) —— 确认你手上是哪个机型、选对 variant
 4. `examples/d1/udp_walk.py` —— 真机第一次行走
 5. `examples/d1/presets_and_telemetry.py` —— 特技 + 遥测
-6. [docs/camera_height_workflow.md](docs/camera_height_workflow.md) —— 相机标定 + 倾斜测高流程
-7. [docs/dog_testing_runbook.md](docs/dog_testing_runbook.md) —— 今日实测命令：SSH、网格/激光标定、倾斜探测
-8. `examples/cookbook/` —— 工程化模式（看门狗 / 多机 / 数据采集）
-9. [docs/deployment.md](docs/deployment.md) —— 把程序正式部署到机器人上 + 开机自启
+6. `examples/cookbook/` —— 工程化模式（看门狗 / 多机 / 数据采集）
+7. [docs/deployment.md](docs/deployment.md) —— 把程序正式部署到机器人上 + 开机自启
 
 ## 8. 常见问题
 

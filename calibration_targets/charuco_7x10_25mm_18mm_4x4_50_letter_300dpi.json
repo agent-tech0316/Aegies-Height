@@ -1,0 +1,22 @@
+{
+  "type": "ChArUco board",
+  "dictionary": "DICT_4X4_50",
+  "squares_x": 7,
+  "squares_y": 10,
+  "square_length_mm": 25.0,
+  "marker_length_mm": 18.0,
+  "square_length_m": 0.025,
+  "marker_length_m": 0.018,
+  "paper": "US Letter 8.5x11 inch",
+  "dpi": 300,
+  "page_pixels": [
+    2550,
+    3300
+  ],
+  "board_pixels": [
+    2067,
+    2953
+  ],
+  "print_instruction": "Print at 100% / Actual size. Do not fit to page or scale.",
+  "opencv_constructor": "cv2.aruco.CharucoBoard((7, 10), 0.025, 0.018, cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_4X4_50))"
+}

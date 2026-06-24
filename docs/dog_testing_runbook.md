@@ -21,6 +21,9 @@ docs/accepted_laser_images_cleanup.md    # keep only accepted laser images and c
 examples/vision/grid_laser_calibration.py # grid + laser calibration commands
 examples/vision/height_calculator.py     # YOLO/distance/height helper commands
 examples/vision/tilt_telemetry_probe.py  # tilt telemetry test, for later
+examples/d1/udp_walk.py                  # SDK walking demo from the vendor docs
+examples/d1/raw_zsibot_move.py           # project-specific raw movement test
+examples/d1/raw_zsibot_sequence.py       # project-specific raw movement sequence
 models/yolov8n.onnx                      # YOLO model
 requirements-vision.txt                  # Python vision dependencies
 test_camera.jpg                          # sample grid image
@@ -161,6 +164,73 @@ Expected:
 
 ```text
 yolo_loaded=true
+```
+
+Check the Raspberry Pi HC-SR04 depth sensor. The project defaults are trigger
+GPIO 17 and echo GPIO 27:
+
+```bash
+python3 examples/vision/read_depth_sensor.py
+```
+
+One JSON sample:
+
+```bash
+python3 examples/vision/read_depth_sensor.py --once --json
+```
+
+The height calculator uses those same pins:
+
+```bash
+python3 examples/vision/height_calculator.py read-distance
+```
+
+Reminder: the HC-SR04 echo pin is 5V. Use a voltage divider or level shifter so
+the Pi GPIO input only receives 3.3V.
+
+Check robot posture and walking separately.
+
+The vendor docs point to the SDK walking demo:
+
+```bash
+cd ~/Aegies-Height
+FF_SDK_D1_VARIANT=zsl-1 FF_SDK_D1_HOST=192.168.234.1 python3 examples/d1/udp_walk.py
+```
+
+The project-specific movement scripts from the earlier working path are:
+
+```bash
+cd ~/Aegies-Height
+python3 examples/d1/raw_zsibot_sequence.py --host 192.168.234.1 --variant zsl-1
+python3 examples/d1/raw_zsibot_move.py forward --host 192.168.234.1 --variant zsl-1 --skip-stand --pre-move-delay 1.0
+python3 examples/d1/raw_zsibot_move.py back --host 192.168.234.1 --variant zsl-1
+python3 examples/d1/raw_zsibot_move.py yaw_left --host 192.168.234.1 --variant zsl-1
+python3 examples/d1/raw_zsibot_move.py zero --host 192.168.234.1 --variant zsl-1
+```
+
+For move-forward-only tests, first get the robot standing and stable, then send
+only the forward command:
+
+```bash
+python3 examples/d1/raw_zsibot_move.py zero --host 192.168.234.1 --variant zsl-1 --stand-wait 5.0 --seconds 1.0
+python3 examples/d1/raw_zsibot_move.py forward --host 192.168.234.1 --variant zsl-1 --skip-stand --pre-move-delay 1.0 --warmup-seconds 1.5 --seconds 1.0 --stop-seconds 1.0
+```
+
+If the movement scripts connect but print:
+
+```text
+Cannot transition to 'move' state: must transition to 'standUp' first.
+```
+
+then the backend does not believe the robot is in stand-up mode yet. Try the
+full sequence script first because it calls `motion.stand()`, warms up zero
+velocity, then streams movement through the same SDK backend.
+
+For posture-only sanity check:
+
+```bash
+cd ~/Aegies-Height
+python3 examples/motion/stand_damping.py --target D1-DEMO
 ```
 
 Check calibration script commands:
@@ -586,8 +656,8 @@ Do this later, after or separate from calibration.
 
 Tilt testing answers:
 
-- does Python expose `attitude()`?
-- does Python expose `rpy()`?
+- does Python expose D1 `motion.attitude_control()`?
+- does Python expose `state.pose()` body pitch?
 - does pitch telemetry change after a small pitch command?
 - does the camera image change when the dog tilts?
 
@@ -606,7 +676,7 @@ Tiny tilt probe:
 python3 examples/vision/tilt_telemetry_probe.py \
   --host 192.168.234.1 \
   --stand \
-  --pitch-vel 0.04 \
+  --pitch-vel -0.04 \
   --pitch-seconds 0.5
 ```
 
@@ -616,7 +686,7 @@ Opposite direction:
 python3 examples/vision/tilt_telemetry_probe.py \
   --host 192.168.234.1 \
   --stand \
-  --pitch-vel -0.04 \
+  --pitch-vel 0.04 \
   --pitch-seconds 0.5
 ```
 
@@ -624,10 +694,9 @@ Look for:
 
 ```text
 connected: true
-available_methods includes "attitude"
-available_methods includes "rpy"
-initial_rpy
-after_tilt_rpy
+available_motion_methods includes "attitude_control"
+initial_pose
+after_tilt_pose
 before_image.detections
 after_image.detections
 ```
@@ -638,21 +707,82 @@ Saved images:
 tilt_probe_runs/latest/
 ```
 
-## 9. Questions For The Dog Developers
+## 8.5 Auto-Aim Height Loop
 
-Ask:
+Run this on the Raspberry Pi, because the Pi owns the GPIO depth sensor. The Pi
+captures the robot camera stream, reads depth, decides how the robot should
+move, and can optionally send small robot commands.
+
+First run dry, with no robot motion:
+
+```bash
+python3 examples/vision/auto_aim_height.py \
+  --host 192.168.234.1 \
+  --max-steps 3
+```
+
+If the decisions look correct, allow small forward/back/yaw movement:
+
+```bash
+python3 examples/vision/auto_aim_height.py \
+  --host 192.168.234.1 \
+  --stand-first \
+  --enable-motion \
+  --max-steps 5 \
+  --target-distance-cm 150
+```
+
+Pitch is separate and should only be enabled after confirming pitch direction
+with `tilt_telemetry_probe.py`:
+
+```bash
+python3 examples/vision/auto_aim_height.py \
+  --host 192.168.234.1 \
+  --stand-first \
+  --enable-motion \
+  --enable-pitch \
+  --pitch-speed 0.04 \
+  --max-steps 5
+```
+
+Safety defaults are intentionally small:
 
 ```text
-1. What are the units for attitude(roll_vel, pitch_vel, yaw_vel, height_vel)?
-2. Does positive pitch_vel tilt the camera/body upward or downward?
-3. What are the safe pitch limits while standing?
-4. Does rpy()[1] or pose.pitch report radians or degrees?
-5. Is pose.pitch body pitch, IMU pitch, or camera pitch?
-6. What is the camera mounting angle offset relative to the body frame?
-7. What is the camera center height from the floor in normal standing pose?
-8. Is the dog camera fixed to the body, or does it have its own tilt actuator?
-9. Is there an API to read current camera pitch directly?
+forward/back speed: 0.08 m/s
+yaw speed: 0.12 rad/s
+pitch speed: 0.04 rad/s
+command duration: 0.45 s
 ```
+
+## 9. Questions For The Dog Developers
+
+Answered developer notes:
+
+```text
+1. D1 `motion.attitude_control(roll_vel, pitch_vel, yaw_vel, height_vel)` is quadruped-only.
+2. roll_vel / pitch_vel / yaw_vel are rad/s, range about -0.5..0.5.
+3. height_vel is m/s, range about -0.5..0.5.
+4. These are physical units, not normalized values.
+5. Negative pitch_vel means the head/camera pitches downward in the current D1 joystick mapping.
+6. For first tests, keep pitch_vel around +/-0.10..0.15 rad/s and use short duration.
+7. `state.pose()` returns body pose including roll/pitch/yaw in radians when supported.
+8. pose pitch is the robot current body/IMU fused Euler pose, not camera-only pitch.
+9. The camera has a fixed mounting angle relative to the body.
+10. The fixed camera mount offset cannot be read from the model; measure it on the real robot.
+11. The camera is fixed on the body and follows body pitch.
+12. There is no known direct camera pitch API.
+13. Camera center height from the floor must be measured on the real robot.
+14. If the robot only has dog_task UDP fallback, pitch/yaw are continuous but roll/height are discrete direction pulses.
+```
+
+Height math implication:
+
+```text
+camera_pitch = body_pitch_from_state_pose + measured_camera_mount_offset
+```
+
+Use this only after the same-height wall mark has established the real level
+row. For the next demo, the wall-mark level calibration is still the main path.
 
 ## 10. What To Send Back After Today
 

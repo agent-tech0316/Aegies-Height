@@ -33,11 +33,26 @@ radar/depth distance
 = height estimate
 ```
 
+For auto-aiming, keep the Pi as the measurement/controller computer:
+
+```text
+Pi reads GPIO depth
+Pi captures robot camera frame
+Pi detects person and decides aim correction
+Pi sends small move/tilt command to robot
+Pi repeats until centered, then estimates height
+```
+
+The robot still "uses" depth, but indirectly: the Pi converts depth and image
+errors into robot movement commands. This avoids adding a depth API on the
+robot while keeping all measurement logic in one place.
+
 ## Files
 
 ```text
 examples/vision/grid_laser_calibration.py # today's calibration script
 examples/vision/height_calculator.py      # height/distance helper script
+examples/vision/auto_aim_height.py        # Pi depth + robot camera auto-aim loop
 examples/vision/tilt_telemetry_probe.py   # later tilt telemetry probe
 docs/dog_testing_runbook.md               # full command runbook
 test_camera.jpg                           # sample grid image
@@ -94,6 +109,44 @@ confirms it:
 ```text
 vertical_fov_deg ~= 32.5
 ```
+
+### Raspberry Pi Depth Sensor
+
+The current HC-SR04 wiring used by the examples is:
+
+```text
+trigger: GPIO 17
+echo:    GPIO 27
+```
+
+First verify the sensor directly on the Pi:
+
+```bash
+python3 examples/vision/read_depth_sensor.py
+```
+
+Read one JSON sample:
+
+```bash
+python3 examples/vision/read_depth_sensor.py --once --json
+```
+
+The height calculator uses the same pins by default:
+
+```bash
+python3 examples/vision/height_calculator.py read-distance
+```
+
+If you move the wires later, override the pins:
+
+```bash
+python3 examples/vision/height_calculator.py read-distance \
+  --hcsr04-trigger-pin 17 \
+  --hcsr04-echo-pin 27
+```
+
+The HC-SR04 echo pin is 5V. Protect the Raspberry Pi GPIO with a voltage
+divider or level shifter so GPIO 27 only receives 3.3V.
 
 ### 1. Inspect The Grid
 
@@ -215,6 +268,24 @@ laser_error_px_avg
 
 Later, we keep the tilt path. The dog should tilt/aim the camera, YOLO finds the
 person, and we use pitch telemetry plus calibrated camera geometry.
+
+Developer-provided tilt notes:
+
+```text
+motion.attitude_control(roll_vel, pitch_vel, yaw_vel, height_vel)
+D1 quadruped only; A2/X2 humanoid motion does not expose this method
+call motion.stand() first; aegis backend sends attitude velocity directly
+roll_vel / pitch_vel / yaw_vel units: rad/s, API range about -0.5..0.5
+height_vel unit: m/s, API range about -0.5..0.5
+negative pitch_vel: head/camera pitches downward in the current D1 joystick mapping
+safe first tests: keep pitch_vel around +/-0.10..0.15 rad/s, short duration
+state.pose() returns body pose including roll/pitch/yaw in radians when supported
+pose pitch is body/IMU fused pose, not camera-only pitch
+camera is fixed to body; camera pitch follows body pitch plus mount offset
+camera mount offset and camera height must be measured on the real robot
+there is no known direct camera pitch API
+dog_task UDP fallback keeps pitch/yaw continuous; roll/height are discrete direction pulses
+```
 
 Probe command:
 
