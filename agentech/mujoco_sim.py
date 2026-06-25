@@ -21,6 +21,10 @@ LEG_PHASE = {"FL": 0.0, "RR": 0.0, "FR": math.pi, "RL": math.pi}
 GAIT_RATE_HZ = 1.55
 STAND_HIP = 0.58
 STAND_KNEE = -1.08
+STAND_ROOT_Z = 0.37
+WALK_BODY_BOB_Z = 0.006
+TURN_BODY_BOB_Z = 0.005
+ATTITUDE_REFERENCE_RAD = math.radians(15.0)
 
 
 @dataclass(frozen=True)
@@ -221,7 +225,7 @@ def _update_ff_demo_camera(model: Any, mujoco: Any, data: Any, camera: Any, time
         lookat = data.xpos[base_id].copy()
     else:
         lookat = [0.0, 0.0, 0.25]
-    lookat[2] = 0.17
+    lookat[2] = 0.20
     camera.type = mujoco.mjtCamera.mjCAMERA_FREE
     camera.lookat[:] = lookat
     camera.distance = 1.15
@@ -248,6 +252,19 @@ def _clip_joint(model: Any, mujoco: Any, joint_name: str, value: float) -> float
     return value
 
 
+def _attitude_root_z_offset(pitch_rad: float) -> float:
+    scale = min(1.0, abs(pitch_rad) / ATTITUDE_REFERENCE_RAD)
+    if pitch_rad >= 0:
+        return -0.023 * scale
+    return -0.020 * scale
+
+
+def _attitude_joint_coefficients(pitch_rad: float) -> tuple[float, float]:
+    if pitch_rad >= 0:
+        return 0.50, -0.90
+    return -1.15, -1.20
+
+
 def _apply_ff_demo_gait(
     model: Any,
     mujoco: Any,
@@ -256,17 +273,23 @@ def _apply_ff_demo_gait(
     gait_phase: float,
     settle: float,
     direction: float,
+    pitch_deg: float = 0.0,
 ) -> None:
     """Use the same public Aegis gait math shipped in FF's MuJoCo demo."""
 
+    pitch = max(math.radians(-25.0), min(math.radians(25.0), math.radians(pitch_deg)))
+    hip_comp, knee_comp = _attitude_joint_coefficients(pitch)
     for leg in LEGS:
         phase = gait_phase * direction + LEG_PHASE[leg]
         swing = math.sin(phase)
         lift = max(0.0, swing)
+        front_back = 1.0 if leg in {"FL", "FR"} else -1.0
+        hip_attitude = front_back * hip_comp * pitch
+        knee_attitude = -front_back * knee_comp * pitch
         targets = {
             "ABAD": settle * 0.10 * math.sin(phase + 0.4),
-            "HIP": STAND_HIP + settle * 0.32 * swing,
-            "KNEE": STAND_KNEE + settle * 0.34 * lift,
+            "HIP": STAND_HIP + hip_attitude + settle * 0.32 * swing,
+            "KNEE": STAND_KNEE + knee_attitude + settle * 0.34 * lift,
         }
         for joint, value in targets.items():
             joint_name = f"{leg}_{joint}_JOINT"
@@ -309,7 +332,7 @@ class MuJoCoPreview:
 
         x = 0.0
         y = 0.0
-        z = 0.33
+        z = STAND_ROOT_Z
         yaw = 0.0
         pitch = 0.0
         gait_phase = 0.0
@@ -318,14 +341,15 @@ class MuJoCoPreview:
         steps = 0
 
         def set_root_pose(*, gait_settle: float = 0.0, gait_direction: float = 1.0) -> None:
-            data.qpos[root_qpos : root_qpos + 3] = [x, y, z]
+            root_z = z + _attitude_root_z_offset(pitch)
+            data.qpos[root_qpos : root_qpos + 3] = [x, y, root_z]
             data.qpos[root_qpos + 3 : root_qpos + 7] = _quat_from_yaw_pitch(yaw, -pitch)
             mujoco.mj_forward(model, data)
             frames.append(
                 {
                     "x": x,
                     "y": y,
-                    "z": z,
+                    "z": root_z,
                     "yaw": math.degrees(yaw),
                     "pitch": math.degrees(pitch),
                     "gait_phase": gait_phase,
@@ -352,12 +376,12 @@ class MuJoCoPreview:
                 for _ in range(count):
                     time_s += timestep_s
                     gait_phase += 2.0 * math.pi * GAIT_RATE_HZ * timestep_s
-                    z = 0.33 + 0.02 * math.sin(gait_phase)
+                    z = STAND_ROOT_Z + WALK_BODY_BOB_Z * math.sin(gait_phase)
                     x += math.cos(yaw) * direction * speed * timestep_s
                     y += math.sin(yaw) * direction * speed * timestep_s
                     set_root_pose(gait_settle=1.0, gait_direction=direction)
                     steps += 1
-                z = 0.33
+                z = STAND_ROOT_Z
                 continue
 
             if action in {"left", "turn_left", "right", "turn_right", "rotate", "yaw"}:
@@ -379,12 +403,12 @@ class MuJoCoPreview:
                 for _ in range(count):
                     time_s += timestep_s
                     gait_phase += 2.0 * math.pi * GAIT_RATE_HZ * timestep_s
-                    z = 0.33 + 0.015 * math.sin(gait_phase)
+                    z = STAND_ROOT_Z + TURN_BODY_BOB_Z * math.sin(gait_phase)
                     yaw += yaw_delta
                     turn_direction = 1.0 if yaw_delta >= 0 else -1.0
                     set_root_pose(gait_settle=1.0, gait_direction=turn_direction)
                     steps += 1
-                z = 0.33
+                z = STAND_ROOT_Z
 
             if action in {"pitch", "camera_pitch", "look_up", "look_down"}:
                 if action == "pitch":
@@ -460,14 +484,15 @@ class MuJoCoPreview:
                 pitch_rad = math.radians(float(frame.get("pitch", 0.0)))
                 x = float(frame.get("x", 0.0))
                 y = float(frame.get("y", 0.0))
-                z = float(frame.get("z", 0.33))
+                z = float(frame.get("z", STAND_ROOT_Z))
                 gait_phase = float(frame.get("gait_phase", 0.0))
                 gait_settle = float(frame.get("gait_settle", 0.0))
                 gait_direction = float(frame.get("gait_direction", 1.0))
                 time_s = float(frame.get("time_s", 0.0))
                 data.qpos[root_qpos : root_qpos + 3] = [x, y, z]
                 data.qpos[root_qpos + 3 : root_qpos + 7] = _quat_from_yaw_pitch(yaw_rad, -pitch_rad)
-                _apply_ff_demo_gait(model, mujoco, data, joint_addresses, gait_phase, gait_settle, gait_direction)
+                pitch_deg = float(frame.get("pitch", 0.0))
+                _apply_ff_demo_gait(model, mujoco, data, joint_addresses, gait_phase, gait_settle, gait_direction, pitch_deg)
                 mujoco.mj_forward(model, data)
                 _update_ff_demo_camera(model, mujoco, data, camera, time_s)
                 renderer.update_scene(data, camera=camera)
