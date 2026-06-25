@@ -115,9 +115,12 @@ def _quat_multiply(left: list[float], right: list[float]) -> list[float]:
     ]
 
 
-def _quat_from_yaw(yaw_rad: float) -> list[float]:
+def _quat_from_yaw_pitch(yaw_rad: float, pitch_rad: float = 0.0) -> list[float]:
     yaw_half = yaw_rad / 2.0
-    return [math.cos(yaw_half), 0.0, 0.0, math.sin(yaw_half)]
+    pitch_half = pitch_rad / 2.0
+    yaw_quat = [math.cos(yaw_half), 0.0, 0.0, math.sin(yaw_half)]
+    pitch_quat = [math.cos(pitch_half), 0.0, math.sin(pitch_half), 0.0]
+    return _quat_multiply(yaw_quat, pitch_quat)
 
 
 def _smoothstep(edge0: float, edge1: float, value: float) -> float:
@@ -211,7 +214,7 @@ def _build_ff_preview_model(mujoco: Any, model_path: Path, width: int = 640, hei
 
 
 def _update_ff_demo_camera(model: Any, mujoco: Any, data: Any, camera: Any, time_s: float) -> None:
-    """Use the camera path from FF's public Aegis MuJoCo demo."""
+    """Keep a stable observer camera while the Aegis model moves or tilts."""
 
     base_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "BASE_LINK")
     if base_id >= 0:
@@ -221,19 +224,9 @@ def _update_ff_demo_camera(model: Any, mujoco: Any, data: Any, camera: Any, time
     lookat[2] = 0.17
     camera.type = mujoco.mjtCamera.mjCAMERA_FREE
     camera.lookat[:] = lookat
-    if time_s < 2.1:
-        camera.distance = 1.15
-        camera.azimuth = 98.0 + 3.0 * math.sin(1.1 * time_s)
-        camera.elevation = -18.0
-    elif time_s < 4.2:
-        blend = _smoothstep(2.1, 4.2, time_s)
-        camera.distance = 1.25 - 0.10 * blend
-        camera.azimuth = 122.0 + 22.0 * blend
-        camera.elevation = -19.0 + 2.0 * blend
-    else:
-        camera.distance = 1.10
-        camera.azimuth = 178.0 + 4.0 * math.sin(1.0 * time_s)
-        camera.elevation = -17.0
+    camera.distance = 1.15
+    camera.azimuth = 104.0
+    camera.elevation = -18.0
 
 
 def _joint_qpos_addresses(model: Any, mujoco: Any) -> dict[str, int]:
@@ -326,7 +319,7 @@ class MuJoCoPreview:
 
         def set_root_pose(*, gait_settle: float = 0.0, gait_direction: float = 1.0) -> None:
             data.qpos[root_qpos : root_qpos + 3] = [x, y, z]
-            data.qpos[root_qpos + 3 : root_qpos + 7] = _quat_from_yaw(yaw)
+            data.qpos[root_qpos + 3 : root_qpos + 7] = _quat_from_yaw_pitch(yaw, -pitch)
             mujoco.mj_forward(model, data)
             frames.append(
                 {
@@ -464,6 +457,7 @@ class MuJoCoPreview:
         try:
             for frame in selected:
                 yaw_rad = math.radians(float(frame.get("yaw", 0.0)))
+                pitch_rad = math.radians(float(frame.get("pitch", 0.0)))
                 x = float(frame.get("x", 0.0))
                 y = float(frame.get("y", 0.0))
                 z = float(frame.get("z", 0.33))
@@ -472,7 +466,7 @@ class MuJoCoPreview:
                 gait_direction = float(frame.get("gait_direction", 1.0))
                 time_s = float(frame.get("time_s", 0.0))
                 data.qpos[root_qpos : root_qpos + 3] = [x, y, z]
-                data.qpos[root_qpos + 3 : root_qpos + 7] = _quat_from_yaw(yaw_rad)
+                data.qpos[root_qpos + 3 : root_qpos + 7] = _quat_from_yaw_pitch(yaw_rad, -pitch_rad)
                 _apply_ff_demo_gait(model, mujoco, data, joint_addresses, gait_phase, gait_settle, gait_direction)
                 mujoco.mj_forward(model, data)
                 _update_ff_demo_camera(model, mujoco, data, camera, time_s)
