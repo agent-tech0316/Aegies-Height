@@ -88,7 +88,7 @@ with Agentech.robot(dry_run=True) as dog:
 | `aegis.turn_left` | `Agentech.turn_left(angle)` | `motion.cmd_vel(angular=+speed)` |
 | `aegis.turn_right` | `Agentech.turn_right(angle)` | `motion.cmd_vel(angular=-speed)` |
 | `aegis.rotate` | `Agentech.rotate(angle)` | signed yaw command |
-| `aegis.attitude_control` | `Agentech.look_up(angle)` / `Agentech.look_down(angle)` | `motion.attitude_control(pitch_vel=...)` streamed at 20 Hz; positive pitch looks up, negative pitch looks down |
+| `aegis.attitude_control` | `Agentech.look_up(angle)` / `Agentech.look_down(angle)` | `motion.attitude_control(pitch_vel=...)` streamed at 20 Hz; positive pitch tilts up, negative pitch tilts down |
 | `aegis.stop` | `Agentech.stop()` | `motion.stop()` |
 | `aegis.stand` | `Agentech.stand()` | `motion.stand()` |
 | `aegis.sit` | `Agentech.sit()` | `motion.sit()` or `do_preset("lie_down")` |

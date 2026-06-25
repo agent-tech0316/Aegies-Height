@@ -115,12 +115,9 @@ def _quat_multiply(left: list[float], right: list[float]) -> list[float]:
     ]
 
 
-def _quat_from_yaw_pitch(yaw_rad: float, pitch_rad: float = 0.0) -> list[float]:
+def _quat_from_yaw(yaw_rad: float) -> list[float]:
     yaw_half = yaw_rad / 2.0
-    pitch_half = pitch_rad / 2.0
-    yaw_quat = [math.cos(yaw_half), 0.0, 0.0, math.sin(yaw_half)]
-    pitch_quat = [math.cos(pitch_half), 0.0, math.sin(pitch_half), 0.0]
-    return _quat_multiply(yaw_quat, pitch_quat)
+    return [math.cos(yaw_half), 0.0, 0.0, math.sin(yaw_half)]
 
 
 def _smoothstep(edge0: float, edge1: float, value: float) -> float:
@@ -328,9 +325,8 @@ class MuJoCoPreview:
         steps = 0
 
         def set_root_pose(*, gait_settle: float = 0.0, gait_direction: float = 1.0) -> None:
-            quat = _quat_from_yaw_pitch(yaw, pitch)
             data.qpos[root_qpos : root_qpos + 3] = [x, y, z]
-            data.qpos[root_qpos + 3 : root_qpos + 7] = quat
+            data.qpos[root_qpos + 3 : root_qpos + 7] = _quat_from_yaw(yaw)
             mujoco.mj_forward(model, data)
             frames.append(
                 {
@@ -468,7 +464,6 @@ class MuJoCoPreview:
         try:
             for frame in selected:
                 yaw_rad = math.radians(float(frame.get("yaw", 0.0)))
-                pitch_rad = math.radians(float(frame.get("pitch", 0.0)))
                 x = float(frame.get("x", 0.0))
                 y = float(frame.get("y", 0.0))
                 z = float(frame.get("z", 0.33))
@@ -477,7 +472,7 @@ class MuJoCoPreview:
                 gait_direction = float(frame.get("gait_direction", 1.0))
                 time_s = float(frame.get("time_s", 0.0))
                 data.qpos[root_qpos : root_qpos + 3] = [x, y, z]
-                data.qpos[root_qpos + 3 : root_qpos + 7] = _quat_from_yaw_pitch(yaw_rad, pitch_rad)
+                data.qpos[root_qpos + 3 : root_qpos + 7] = _quat_from_yaw(yaw_rad)
                 _apply_ff_demo_gait(model, mujoco, data, joint_addresses, gait_phase, gait_settle, gait_direction)
                 mujoco.mj_forward(model, data)
                 _update_ff_demo_camera(model, mujoco, data, camera, time_s)
