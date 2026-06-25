@@ -13,6 +13,9 @@ from agentech.mujoco_sim import MuJoCoPreview
 def main() -> int:
     payload = json.load(sys.stdin)
     code = str(payload.get("code") or "")
+    max_render_frames = int(payload.get("max_render_frames") or 12)
+    render_width = int(payload.get("render_width") or 480)
+    render_height = int(payload.get("render_height") or 320)
     preview = MuJoCoPreview.aegis()
     result = preview.run_code(code, timestep_s=0.02)
     sampled_frames = result.frames[:: max(1, len(result.frames) // 40)]
@@ -27,7 +30,12 @@ def main() -> int:
                 "command_count": result.command_count,
                 "final_pose": result.final_pose,
                 "frames": sampled_frames,
-                "rendered_frames": preview.render_data_urls(result.frames, max_frames=18),
+                "rendered_frames": preview.render_data_urls(
+                    result.frames,
+                    max_frames=max_render_frames,
+                    width=render_width,
+                    height=render_height,
+                ),
             }
         )
     )

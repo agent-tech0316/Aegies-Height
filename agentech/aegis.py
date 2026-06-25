@@ -38,10 +38,12 @@ DEFAULT_SPEED_MPS = 0.3
 DEFAULT_YAW_RATE = 0.35
 DEFAULT_PITCH_RATE = 0.12
 DEFAULT_SECONDS = 1.0
-MAX_SPEED_MPS = 0.6
-MAX_YAW_RATE = 0.8
+MAX_SPEED_MPS = 2.37
+MAX_YAW_RATE = 2.09
 MAX_PITCH_RATE = 0.5
 MAX_SECONDS = 10.0
+MAX_LOOK_UP_DEGREES = 20.0
+MAX_LOOK_DOWN_DEGREES = 25.0
 MAX_TEXT_LENGTH = 180
 
 
@@ -294,7 +296,7 @@ class Robot:
         return self._sync(self._camera_pitch(angle=angle, speed=speed, stop=stop))
 
     async def _camera_pitch(self, angle: float = 10.0, speed: float = DEFAULT_PITCH_RATE, *, stop: bool = True) -> Any:
-        angle = _clamp(angle, -45.0, 45.0, "angle")
+        angle = _clamp(angle, -MAX_LOOK_DOWN_DEGREES, MAX_LOOK_UP_DEGREES, "angle")
         speed = _clamp(abs(speed), 0.03, MAX_PITCH_RATE, "speed")
         seconds = min(abs(math.radians(angle)) / speed, MAX_SECONDS)
         direction = 1.0 if angle >= 0 else -1.0

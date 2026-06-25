@@ -24,7 +24,58 @@ STAND_KNEE = -1.08
 STAND_ROOT_Z = 0.37
 WALK_BODY_BOB_Z = 0.006
 TURN_BODY_BOB_Z = 0.005
-ATTITUDE_REFERENCE_RAD = math.radians(15.0)
+MAX_LINEAR_VELOCITY = 2.37
+MAX_YAW_RATE = 2.09
+MAX_PITCH_RATE = 0.5
+MAX_SECONDS = 10.0
+MIN_TURN_RATE = 0.05
+MIN_PITCH_RATE = 0.03
+MAX_ROTATE_DEGREES = 360.0
+NOSE_UP_MAX_DEGREES = 20.0
+NOSE_DOWN_MAX_DEGREES = 25.0
+
+STAND_POSE = {
+    "FL_ABAD_JOINT": 0.0,
+    "FL_HIP_JOINT": 0.58,
+    "FL_KNEE_JOINT": -1.08,
+    "FR_ABAD_JOINT": 0.0,
+    "FR_HIP_JOINT": 0.58,
+    "FR_KNEE_JOINT": -1.08,
+    "RR_ABAD_JOINT": 0.0,
+    "RR_HIP_JOINT": 0.58,
+    "RR_KNEE_JOINT": -1.08,
+    "RL_ABAD_JOINT": 0.0,
+    "RL_HIP_JOINT": 0.58,
+    "RL_KNEE_JOINT": -1.08,
+}
+
+NOSE_UP_POSE = {
+    **STAND_POSE,
+    "FL_ABAD_JOINT": -0.18,
+    "FL_HIP_JOINT": 0.50,
+    "FL_KNEE_JOINT": -0.61,
+    "FR_ABAD_JOINT": 0.18,
+    "FR_HIP_JOINT": 0.50,
+    "FR_KNEE_JOINT": -0.61,
+    "RR_ABAD_JOINT": 0.18,
+    "RR_HIP_JOINT": 0.90,
+    "RR_KNEE_JOINT": -1.64,
+    "RL_ABAD_JOINT": -0.18,
+    "RL_HIP_JOINT": 0.90,
+    "RL_KNEE_JOINT": -1.64,
+}
+
+NOSE_DOWN_POSE = {
+    **STAND_POSE,
+    "FL_HIP_JOINT": 0.85,
+    "FL_KNEE_JOINT": -2.37,
+    "FR_HIP_JOINT": 0.85,
+    "FR_KNEE_JOINT": -2.37,
+    "RR_HIP_JOINT": 0.67,
+    "RR_KNEE_JOINT": -1.10,
+    "RL_HIP_JOINT": 0.67,
+    "RL_KNEE_JOINT": -1.10,
+}
 
 
 @dataclass(frozen=True)
@@ -225,12 +276,12 @@ def _update_ff_demo_camera(model: Any, mujoco: Any, data: Any, camera: Any, time
         lookat = data.xpos[base_id].copy()
     else:
         lookat = [0.0, 0.0, 0.25]
-    lookat[2] = 0.20
+    lookat[2] = 0.18
     camera.type = mujoco.mjtCamera.mjCAMERA_FREE
     camera.lookat[:] = lookat
-    camera.distance = 1.15
+    camera.distance = 1.75
     camera.azimuth = 104.0
-    camera.elevation = -18.0
+    camera.elevation = -20.0
 
 
 def _joint_qpos_addresses(model: Any, mujoco: Any) -> dict[str, int]:
@@ -252,17 +303,37 @@ def _clip_joint(model: Any, mujoco: Any, joint_name: str, value: float) -> float
     return value
 
 
-def _attitude_root_z_offset(pitch_rad: float) -> float:
-    scale = min(1.0, abs(pitch_rad) / ATTITUDE_REFERENCE_RAD)
-    if pitch_rad >= 0:
-        return -0.023 * scale
-    return -0.020 * scale
+def _require_range(action: str, name: str, value: float, minimum: float, maximum: float) -> float:
+    if not math.isfinite(value) or value < minimum or value > maximum:
+        raise ValueError(f"{action} {name} must be between {minimum} and {maximum}.")
+    return value
 
 
-def _attitude_joint_coefficients(pitch_rad: float) -> tuple[float, float]:
-    if pitch_rad >= 0:
-        return 0.50, -0.90
-    return -1.15, -1.20
+def _scaled_tilt_pose(pitch_rad: float) -> dict[str, Any]:
+    pitch_deg = math.degrees(pitch_rad)
+    if pitch_deg > 0.0:
+        degrees = min(pitch_deg, NOSE_UP_MAX_DEGREES)
+        scale = degrees / NOSE_UP_MAX_DEGREES
+        target_pose = NOSE_UP_POSE
+        base_x = -0.14 * scale
+        base_z = STAND_ROOT_Z + scale * (0.3552 - STAND_ROOT_Z)
+    elif pitch_deg < 0.0:
+        degrees = min(abs(pitch_deg), NOSE_DOWN_MAX_DEGREES)
+        scale = degrees / NOSE_DOWN_MAX_DEGREES
+        target_pose = NOSE_DOWN_POSE
+        base_x = 0.15 * scale
+        base_z = STAND_ROOT_Z + scale * (0.25 - STAND_ROOT_Z)
+    else:
+        target_pose = STAND_POSE
+        base_x = 0.0
+        base_z = STAND_ROOT_Z
+        scale = 0.0
+
+    joints = {
+        name: STAND_POSE[name] + scale * (target_pose[name] - STAND_POSE[name])
+        for name in STAND_POSE
+    }
+    return {"base_x": base_x, "base_z": base_z, "joints": joints}
 
 
 def _apply_ff_demo_gait(
@@ -275,21 +346,19 @@ def _apply_ff_demo_gait(
     direction: float,
     pitch_deg: float = 0.0,
 ) -> None:
-    """Use the same public Aegis gait math shipped in FF's MuJoCo demo."""
+    """Use FF demo gait with the tuned fixed-foot tilt poses for attitude commands."""
 
     pitch = max(math.radians(-25.0), min(math.radians(25.0), math.radians(pitch_deg)))
-    hip_comp, knee_comp = _attitude_joint_coefficients(pitch)
+    tilt_pose = _scaled_tilt_pose(pitch)
+    base_joints = tilt_pose["joints"]
     for leg in LEGS:
         phase = gait_phase * direction + LEG_PHASE[leg]
         swing = math.sin(phase)
         lift = max(0.0, swing)
-        front_back = 1.0 if leg in {"FL", "FR"} else -1.0
-        hip_attitude = front_back * hip_comp * pitch
-        knee_attitude = -front_back * knee_comp * pitch
         targets = {
-            "ABAD": settle * 0.10 * math.sin(phase + 0.4),
-            "HIP": STAND_HIP + hip_attitude + settle * 0.32 * swing,
-            "KNEE": STAND_KNEE + knee_attitude + settle * 0.34 * lift,
+            "ABAD": base_joints[f"{leg}_ABAD_JOINT"] + settle * 0.10 * math.sin(phase + 0.4),
+            "HIP": base_joints[f"{leg}_HIP_JOINT"] + settle * 0.32 * swing,
+            "KNEE": base_joints[f"{leg}_KNEE_JOINT"] + settle * 0.34 * lift,
         }
         for joint, value in targets.items():
             joint_name = f"{leg}_{joint}_JOINT"
@@ -341,14 +410,20 @@ class MuJoCoPreview:
         steps = 0
 
         def set_root_pose(*, gait_settle: float = 0.0, gait_direction: float = 1.0) -> None:
-            root_z = z + _attitude_root_z_offset(pitch)
-            data.qpos[root_qpos : root_qpos + 3] = [x, y, root_z]
+            tilt_pose = _scaled_tilt_pose(pitch)
+            root_x = x + math.cos(yaw) * float(tilt_pose["base_x"])
+            root_y = y + math.sin(yaw) * float(tilt_pose["base_x"])
+            root_z = float(tilt_pose["base_z"]) + (z - STAND_ROOT_Z)
+            data.qpos[root_qpos : root_qpos + 3] = [root_x, root_y, root_z]
             data.qpos[root_qpos + 3 : root_qpos + 7] = _quat_from_yaw_pitch(yaw, -pitch)
             mujoco.mj_forward(model, data)
             frames.append(
                 {
                     "x": x,
                     "y": y,
+                    "root_x": root_x,
+                    "root_y": root_y,
+                    "root_z": root_z,
                     "z": root_z,
                     "yaw": math.degrees(yaw),
                     "pitch": math.degrees(pitch),
@@ -371,6 +446,8 @@ class MuJoCoPreview:
             if action in {"forward", "backward"}:
                 speed = abs(float(params.get("speed", 0.3)))
                 seconds = float(params.get("seconds", 1.0))
+                _require_range(action, "speed", speed, 0.0, MAX_LINEAR_VELOCITY)
+                _require_range(action, "seconds", seconds, 0.0, MAX_SECONDS)
                 direction = 1.0 if action == "forward" else -1.0
                 count = max(1, int(seconds / timestep_s))
                 for _ in range(count):
@@ -388,16 +465,21 @@ class MuJoCoPreview:
                 if action == "yaw":
                     yaw_rate = float(params.get("speed", 0.35))
                     seconds = float(params.get("seconds", 1.0))
+                    _require_range(action, "speed", yaw_rate, -MAX_YAW_RATE, MAX_YAW_RATE)
+                    _require_range(action, "seconds", seconds, 0.0, MAX_SECONDS)
                     count = max(1, int(seconds / timestep_s))
                     yaw_delta = yaw_rate * timestep_s
                 else:
                     angle = float(params.get("angle", 45.0 if action != "rotate" else 90.0))
+                    _require_range(action, "angle", angle, -MAX_ROTATE_DEGREES, MAX_ROTATE_DEGREES)
                     if action in {"right", "turn_right"}:
                         angle = -abs(angle)
                     elif action in {"left", "turn_left"}:
                         angle = abs(angle)
                     yaw_rate = abs(float(params.get("speed", 0.35)))
+                    _require_range(action, "speed", yaw_rate, MIN_TURN_RATE, MAX_YAW_RATE)
                     seconds = max(timestep_s, abs(math.radians(angle)) / yaw_rate)
+                    seconds = min(seconds, MAX_SECONDS)
                     count = max(1, int(seconds / timestep_s))
                     yaw_delta = math.radians(angle) / count
                 for _ in range(count):
@@ -414,21 +496,31 @@ class MuJoCoPreview:
                 if action == "pitch":
                     pitch_rate = float(params.get("speed", 0.12))
                     seconds = float(params.get("seconds", 0.5))
+                    _require_range(action, "speed", pitch_rate, -MAX_PITCH_RATE, MAX_PITCH_RATE)
+                    _require_range(action, "seconds", seconds, 0.0, MAX_SECONDS)
                     count = max(1, int(seconds / timestep_s))
                     pitch_delta = pitch_rate * timestep_s
                 else:
                     angle = float(params.get("angle", 10.0))
+                    if action == "look_up":
+                        _require_range(action, "angle", angle, 0.0, NOSE_UP_MAX_DEGREES)
+                    elif action == "look_down":
+                        _require_range(action, "angle", angle, 0.0, NOSE_DOWN_MAX_DEGREES)
+                    else:
+                        _require_range(action, "angle", angle, -NOSE_DOWN_MAX_DEGREES, NOSE_UP_MAX_DEGREES)
                     if action == "look_down":
                         angle = -abs(angle)
                     elif action == "look_up":
                         angle = abs(angle)
                     pitch_rate = abs(float(params.get("speed", 0.12)))
+                    _require_range(action, "speed", pitch_rate, MIN_PITCH_RATE, MAX_PITCH_RATE)
                     seconds = max(timestep_s, abs(math.radians(angle)) / pitch_rate)
+                    seconds = min(seconds, MAX_SECONDS)
                     count = max(1, int(seconds / timestep_s))
                     pitch_delta = math.radians(angle) / count
                 for _ in range(count):
                     time_s += timestep_s
-                    pitch = max(math.radians(-45), min(math.radians(45), pitch + pitch_delta))
+                    pitch = max(math.radians(-NOSE_DOWN_MAX_DEGREES), min(math.radians(NOSE_UP_MAX_DEGREES), pitch + pitch_delta))
                     set_root_pose()
                     steps += 1
 
@@ -484,12 +576,14 @@ class MuJoCoPreview:
                 pitch_rad = math.radians(float(frame.get("pitch", 0.0)))
                 x = float(frame.get("x", 0.0))
                 y = float(frame.get("y", 0.0))
-                z = float(frame.get("z", STAND_ROOT_Z))
+                root_x = float(frame.get("root_x", x))
+                root_y = float(frame.get("root_y", y))
+                root_z = float(frame.get("root_z", frame.get("z", STAND_ROOT_Z)))
                 gait_phase = float(frame.get("gait_phase", 0.0))
                 gait_settle = float(frame.get("gait_settle", 0.0))
                 gait_direction = float(frame.get("gait_direction", 1.0))
                 time_s = float(frame.get("time_s", 0.0))
-                data.qpos[root_qpos : root_qpos + 3] = [x, y, z]
+                data.qpos[root_qpos : root_qpos + 3] = [root_x, root_y, root_z]
                 data.qpos[root_qpos + 3 : root_qpos + 7] = _quat_from_yaw_pitch(yaw_rad, -pitch_rad)
                 pitch_deg = float(frame.get("pitch", 0.0))
                 _apply_ff_demo_gait(model, mujoco, data, joint_addresses, gait_phase, gait_settle, gait_direction, pitch_deg)
