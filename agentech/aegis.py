@@ -34,10 +34,12 @@ from typing import Any
 
 
 DEFAULT_TARGET = "D1-DEMO"
+DEFAULT_VARIANT = "zsl-1w"
 DEFAULT_SPEED_MPS = 0.3
 DEFAULT_YAW_RATE = 0.35
 DEFAULT_PITCH_RATE = 0.12
 DEFAULT_SECONDS = 1.0
+DEFAULT_STAND_WAIT_SECONDS = 1.0
 MAX_SPEED_MPS = 2.37
 MAX_YAW_RATE = 2.09
 MAX_PITCH_RATE = 0.5
@@ -90,18 +92,23 @@ class Robot:
         target: str = DEFAULT_TARGET,
         *,
         host: str | None = None,
-        variant: str | None = None,
-        dry_run: bool | None = None,
+        variant: str | None = DEFAULT_VARIANT,
+        dry_run: bool = False,
         auto_stop: bool = True,
+        auto_stand: bool = True,
+        stand_wait: float = DEFAULT_STAND_WAIT_SECONDS,
     ) -> None:
         self.target = target
         self.host = host
         self.variant = variant
         self.dry_run = dry_run
         self.auto_stop = auto_stop
+        self.auto_stand = auto_stand
+        self.stand_wait = stand_wait
         self._session: Any | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
         self._is_stopped = True
+        self._is_standing = False
 
     def __enter__(self) -> "Robot":
         self.connect()
@@ -119,8 +126,7 @@ class Robot:
         if self._session is not None:
             return self
 
-        if self.dry_run is not None:
-            os.environ["FF_SDK_DRY_RUN"] = "1" if self.dry_run else "0"
+        os.environ["FF_SDK_DRY_RUN"] = "1" if self.dry_run else "0"
         if self.host:
             os.environ["FF_SDK_D1_HOST"] = self.host
         if self.variant:
@@ -170,7 +176,12 @@ class Robot:
         return self._sync(self._stand())
 
     async def _stand(self) -> Any:
-        return await self.session.motion.stand()
+        result = await self.session.motion.stand()
+        self._is_standing = True
+        wait = _clamp(self.stand_wait, 0.0, MAX_SECONDS, "stand_wait")
+        if wait:
+            await asyncio.sleep(wait)
+        return result
 
     def sit(self) -> Any:
         return self._sync(self._sit())
@@ -178,8 +189,12 @@ class Robot:
     async def _sit(self) -> Any:
         motion = self.session.motion
         if hasattr(motion, "sit"):
-            return await motion.sit()
-        return await motion.do_preset("lie_down")
+            result = await motion.sit()
+        else:
+            result = await motion.do_preset("lie_down")
+        self._is_standing = False
+        self._is_stopped = True
+        return result
 
     def stop(self) -> Any:
         return self._sync(self._stop())
@@ -195,7 +210,12 @@ class Robot:
     async def _damping(self) -> Any:
         result = await self.session.motion.damping()
         self._is_stopped = True
+        self._is_standing = False
         return result
+
+    async def _prepare_motion(self) -> None:
+        if self.auto_stand and not self._is_standing:
+            await self._stand()
 
     def forward(self, speed: float = DEFAULT_SPEED_MPS, seconds: float = DEFAULT_SECONDS, *, stop: bool = True) -> Any:
         return self._sync(self._forward(speed=speed, seconds=seconds, stop=stop))
@@ -203,6 +223,7 @@ class Robot:
     async def _forward(self, speed: float = DEFAULT_SPEED_MPS, seconds: float = DEFAULT_SECONDS, *, stop: bool = True) -> Any:
         speed = _clamp(speed, 0.0, MAX_SPEED_MPS, "speed")
         seconds = _clamp(seconds, 0.0, MAX_SECONDS, "seconds")
+        await self._prepare_motion()
         self._is_stopped = speed == 0.0
         await self.session.motion.cmd_vel(linear=speed, angular=0.0)
         await asyncio.sleep(seconds)
@@ -216,6 +237,7 @@ class Robot:
     async def _backward(self, speed: float = DEFAULT_SPEED_MPS, seconds: float = DEFAULT_SECONDS, *, stop: bool = True) -> Any:
         speed = _clamp(speed, 0.0, MAX_SPEED_MPS, "speed")
         seconds = _clamp(seconds, 0.0, MAX_SECONDS, "seconds")
+        await self._prepare_motion()
         self._is_stopped = speed == 0.0
         await self.session.motion.cmd_vel(linear=-speed, angular=0.0)
         await asyncio.sleep(seconds)
@@ -229,6 +251,7 @@ class Robot:
     async def _yaw(self, speed: float = DEFAULT_YAW_RATE, seconds: float = DEFAULT_SECONDS, *, stop: bool = True) -> Any:
         speed = _clamp(speed, -MAX_YAW_RATE, MAX_YAW_RATE, "speed")
         seconds = _clamp(seconds, 0.0, MAX_SECONDS, "seconds")
+        await self._prepare_motion()
         self._is_stopped = speed == 0.0
         await self.session.motion.cmd_vel(linear=0.0, angular=speed)
         await asyncio.sleep(seconds)
@@ -392,11 +415,13 @@ class Agentech:
         target: str = DEFAULT_TARGET,
         *,
         host: str | None = None,
-        variant: str | None = None,
-        dry_run: bool | None = None,
+        variant: str | None = DEFAULT_VARIANT,
+        dry_run: bool = False,
         auto_stop: bool = True,
+        auto_stand: bool = True,
+        stand_wait: float = DEFAULT_STAND_WAIT_SECONDS,
     ) -> Robot:
-        return Robot(target=target, host=host, variant=variant, dry_run=dry_run, auto_stop=auto_stop)
+        return Robot(target=target, host=host, variant=variant, dry_run=dry_run, auto_stop=auto_stop, auto_stand=auto_stand, stand_wait=stand_wait)
 
     @staticmethod
     def _once(func: Callable[[Robot], Any], **connect_kwargs: Any) -> Any:

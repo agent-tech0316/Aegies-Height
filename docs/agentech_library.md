@@ -10,6 +10,8 @@ Agentech.capture_image()
 
 The library hides the lower-level FF SDK calls, safety clamps values, and still lets advanced users pass speed, seconds, angle, and robot connection settings when needed.
 
+Important: `Agentech.forward()` is a real robot command by default. If the FF SDK is installed and the machine can reach the robot, it connects to the Aegis wheeled variant (`zsl-1w`), stands the robot, waits one second for the body to settle, sends `motion.cmd_vel(linear=+speed, angular=0.0)`, waits for the requested time, then stops. Use `dry_run=True` only when you intentionally want practice code that does not move hardware.
+
 ## Install
 
 Install from GitHub today:
@@ -57,6 +59,50 @@ Agentech.stop()
 
 Every one-line call opens a robot session, runs the command, then closes safely. That is easiest for beginners.
 
+For a real robot on a known IP address:
+
+```python
+from agentech import Agentech
+
+Agentech.forward(host="192.168.234.1", speed=0.2, seconds=1)
+```
+
+That one line means:
+
+```python
+await dog.motion.stand()
+await asyncio.sleep(1)
+await dog.motion.cmd_vel(linear=0.2, angular=0.0)
+await asyncio.sleep(1)
+await dog.motion.stop()
+```
+
+## Student Submission / Robot Hotspot Workflow
+
+The student code should stay simple. For example, `student_forward.py` can be only:
+
+```python
+from agentech import Agentech
+
+Agentech.forward()
+```
+
+The deployment workflow does the rest:
+
+1. connect the computer to the robot hotspot
+2. copy the student Python file to the robot over SSH
+3. run the file on the robot with the FF SDK installed
+4. the Agentech library stands the robot, waits, moves forward, stops, and closes the session
+
+Command-line runner:
+
+```bash
+export ROBOT_PASSWORD=...
+python scripts/run_agentech_on_robot.py examples/student_forward.py --host 192.168.234.1
+```
+
+That runner uploads the script to `/tmp/agentech_student.py`, sets `FF_SDK_D1_VARIANT=zsl-1w`, disables dry-run, and runs `python3 /tmp/agentech_student.py` on the robot.
+
 ## Recommended Session Style
 
 Use a session when running several commands together. This keeps one robot connection open and makes longer programs cleaner.
@@ -64,7 +110,7 @@ Use a session when running several commands together. This keeps one robot conne
 ```python
 from agentech import Agentech
 
-with Agentech.robot(dry_run=True) as dog:
+with Agentech.robot(host="192.168.234.1", dry_run=False) as dog:
     dog.stand()
     dog.forward(speed=0.25, seconds=1.0)
     dog.left(angle=45)
@@ -75,7 +121,28 @@ with Agentech.robot(dry_run=True) as dog:
     dog.stop()
 ```
 
-Use `dry_run=True` while writing code on a laptop. Remove it or set `dry_run=False` when running on the real robot with the FF SDK installed.
+Use `dry_run=True` while writing code on a laptop. Use `dry_run=False` or omit it when running on the real robot with the FF SDK installed.
+
+Movement commands automatically stand first:
+
+```python
+Agentech.forward()
+Agentech.backward()
+Agentech.left()
+Agentech.right()
+Agentech.yaw()
+```
+
+Each one follows the same formal sequence:
+
+1. connect to the robot
+2. stand up
+3. wait for `stand_wait=1.0`
+4. run the motion command
+5. stop
+6. close the session
+
+Advanced users can set `auto_stand=False` or `stand_wait=0` when they are already managing posture themselves.
 
 ## Easy Function Reference
 
@@ -106,10 +173,11 @@ Use `dry_run=True` while writing code on a laptop. Remove it or set `dry_run=Fal
 
 | Parameter | Used by | Default | Safe range | Meaning |
 | --- | --- | --- | --- | --- |
-| `speed` | `forward`, `backward` | `0.3` | `0.0` to `0.6` | Walking speed in meters per second. |
+| `speed` | `forward`, `backward` | `0.3` | `0.0` to `2.37` | Walking speed in meters per second. |
 | `seconds` | walking, yaw, pitch | `1.0` | `0.0` to `10.0` | How long to hold the command. |
-| `angle` | turn, rotate, look up/down | `45` for turns, `10` for tilt | turns: `-360` to `360`; tilt: `-45` to `45` | Human-readable degrees. |
-| `speed` | `left`, `right`, `rotate` | `0.35` | `0.05` to `0.8` | Yaw rate used to estimate turn duration. |
+| `stand_wait` | all movement commands | `1.0` | `0.0` to `10.0` | How long to wait after automatic stand before motion starts. |
+| `angle` | turn, rotate, look up/down | `45` for turns, `10` for tilt | turns: `-360` to `360`; look up: `0` to `20`; look down: `0` to `25` | Human-readable degrees. |
+| `speed` | `left`, `right`, `rotate` | `0.35` | `0.05` to `2.09` | Yaw rate used to estimate turn duration. |
 | `speed` | `look_up`, `look_down`, `camera_pitch` | `0.12` | `0.03` to `0.5` | Pitch velocity in radians per second. |
 | `hz` | `pitch` | `20` | `1` to `50` | How often attitude control is resent. |
 | `output` | `capture_image` | `agentech_capture.jpg` | any local path | File path where the image is saved. |
@@ -121,11 +189,11 @@ This is the simple version for the height-measurement workflow:
 ```python
 from agentech import Agentech
 
-with Agentech.robot() as dog:
+with Agentech.robot(host="192.168.234.1") as dog:
     dog.stand()
     dog.look_up(angle=15)
     dog.capture_image(output="top.jpg")
-    dog.look_down(angle=30)
+    dog.look_down(angle=15)
     dog.capture_image(output="bottom.jpg")
     dog.stop()
 ```
@@ -171,4 +239,3 @@ Agentech.run_sequence([
     {"action": "stop"},
 ])
 ```
-
