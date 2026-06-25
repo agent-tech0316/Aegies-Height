@@ -13,7 +13,7 @@ from agentech.mujoco_sim import MuJoCoPreview
 def main() -> int:
     payload = json.load(sys.stdin)
     code = str(payload.get("code") or "")
-    max_render_frames = int(payload.get("max_render_frames") or 12)
+    max_render_frames = int(payload.get("max_render_frames") or 32)
     render_width = int(payload.get("render_width") or 480)
     render_height = int(payload.get("render_height") or 320)
     preview = MuJoCoPreview.aegis()
