@@ -101,7 +101,9 @@ export ROBOT_PASSWORD=...
 python scripts/run_agentech_on_robot.py examples/student_forward.py --host 192.168.234.1
 ```
 
-That runner uploads the script to `/tmp/agentech_student.py`, sets `FF_SDK_D1_VARIANT=zsl-1w`, disables dry-run, and runs `python3 /tmp/agentech_student.py` on the robot.
+That runner uploads the local `agentech` package to `/tmp/agentech_runtime`, uploads the student script to `/tmp/agentech_student.py`, sets `PYTHONPATH=/tmp/agentech_runtime`, sets `FF_SDK_D1_VARIANT=zsl-1w`, disables dry-run, and runs `python3 /tmp/agentech_student.py` on the robot.
+
+For real movement to work, the robot runtime still needs the FF SDK wheel installed and the robot must be reachable over the hotspot/SSH network. If those two things are true, `Agentech.forward()` sends the real FF SDK movement command.
 
 ## Recommended Session Style
 

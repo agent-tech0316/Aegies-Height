@@ -47,6 +47,7 @@ def main() -> int:
     parser.add_argument("--user", default="firefly")
     parser.add_argument("--password", default=os.environ.get("ROBOT_PASSWORD"))
     parser.add_argument("--remote-path", default="/tmp/agentech_student.py")
+    parser.add_argument("--remote-root", default="/tmp/agentech_runtime")
     parser.add_argument("--python", default="python3")
     parser.add_argument("--variant", default="zsl-1w")
     parser.add_argument("--timeout", type=float, default=180.0)
@@ -61,6 +62,25 @@ def main() -> int:
         return 2
 
     ssh_options = "-o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/home/agent-tech/.ssh/known_hosts"
+    repo_root = Path(__file__).resolve().parents[1]
+    package_dir = repo_root / "agentech"
+    if not package_dir.exists():
+        print(f"ERROR: local agentech package not found: {package_dir}", file=sys.stderr)
+        return 2
+
+    remote_root = args.remote_root.rstrip("/")
+    mkdir_command = f"mkdir -p {shlex.quote(remote_root)}"
+    ssh_mkdir = f"ssh {ssh_options} {shlex.quote(args.user)}@{shlex.quote(args.host)} {shlex.quote(mkdir_command)}"
+    mkdir_status = run_password_command(ssh_mkdir, args.password, args.timeout)
+    if mkdir_status != 0:
+        return mkdir_status
+
+    package_destination = f"{args.user}@{args.host}:{remote_root}/"
+    package_copy_command = f"scp -r {ssh_options} {shlex.quote(str(package_dir))} {shlex.quote(package_destination)}"
+    package_copy_status = run_password_command(package_copy_command, args.password, args.timeout)
+    if package_copy_status != 0:
+        return package_copy_status
+
     destination = f"{args.user}@{args.host}:{args.remote_path}"
     copy_command = f"scp {ssh_options} {shlex.quote(str(script))} {shlex.quote(destination)}"
     copy_status = run_password_command(copy_command, args.password, args.timeout)
@@ -68,6 +88,7 @@ def main() -> int:
         return copy_status
 
     remote_command = (
+        f"export PYTHONPATH={shlex.quote(remote_root)}:${{PYTHONPATH:-}}; "
         f"export FF_SDK_D1_VARIANT={shlex.quote(args.variant)}; "
         "export FF_SDK_DRY_RUN=0; "
         f"{shlex.quote(args.python)} {shlex.quote(args.remote_path)}"
