@@ -3,6 +3,7 @@
 __pycache__/
 *.py[cod]
 *$py.class
+*.egg-info/
 
 # Generated calibration and capture output
 camera_calibration_runs/
