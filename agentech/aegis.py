@@ -34,18 +34,24 @@ from typing import Any
 
 
 DEFAULT_TARGET = "D1-DEMO"
-DEFAULT_VARIANT = "zsl-1w"
+DEFAULT_HOST = "192.168.234.1"
+DEFAULT_VARIANT = "zsl-1"
 DEFAULT_SPEED_MPS = 0.3
 DEFAULT_YAW_RATE = 0.35
 DEFAULT_PITCH_RATE = 0.12
 DEFAULT_SECONDS = 1.0
 DEFAULT_STAND_WAIT_SECONDS = 1.0
 MAX_SPEED_MPS = 2.37
+MAX_BACKWARD_SPEED_MPS = 2.365
+MAX_LATERAL_SPEED_MPS = 0.78
+MAX_LINEAR_ACCELERATION_MPS2 = 2.5
 MAX_YAW_RATE = 2.09
+SLOW_YAW_RATE = 1.05
 MAX_PITCH_RATE = 0.5
 MAX_SECONDS = 10.0
-MAX_LOOK_UP_DEGREES = 20.0
-MAX_LOOK_DOWN_DEGREES = 25.0
+MAX_LOOK_UP_DEGREES = 19.0
+MAX_LOOK_DOWN_DEGREES = 21.0
+MAX_ROLL_DEGREES = 28.0
 MAX_TEXT_LENGTH = 180
 
 
@@ -91,7 +97,7 @@ class Robot:
         self,
         target: str = DEFAULT_TARGET,
         *,
-        host: str | None = None,
+        host: str | None = DEFAULT_HOST,
         variant: str | None = DEFAULT_VARIANT,
         dry_run: bool = False,
         auto_stop: bool = True,
@@ -176,7 +182,13 @@ class Robot:
         return self._sync(self._stand())
 
     async def _stand(self) -> Any:
-        result = await self.session.motion.stand()
+        motion = self.session.motion
+        stand = getattr(motion, "stand", None)
+        if stand is None:
+            raise RuntimeError("FF SDK motion.stand() is not available on this robot session.")
+        result = stand()
+        if inspect.isawaitable(result):
+            result = await result
         self._is_standing = True
         wait = _clamp(self.stand_wait, 0.0, MAX_SECONDS, "stand_wait")
         if wait:
@@ -235,7 +247,7 @@ class Robot:
         return self._sync(self._backward(speed=speed, seconds=seconds, stop=stop))
 
     async def _backward(self, speed: float = DEFAULT_SPEED_MPS, seconds: float = DEFAULT_SECONDS, *, stop: bool = True) -> Any:
-        speed = _clamp(speed, 0.0, MAX_SPEED_MPS, "speed")
+        speed = _clamp(speed, 0.0, MAX_BACKWARD_SPEED_MPS, "speed")
         seconds = _clamp(seconds, 0.0, MAX_SECONDS, "seconds")
         await self._prepare_motion()
         self._is_stopped = speed == 0.0

@@ -49,7 +49,7 @@ def main() -> int:
     parser.add_argument("--remote-path", default="/tmp/agentech_student.py")
     parser.add_argument("--remote-root", default="/tmp/agentech_runtime")
     parser.add_argument("--python", default="python3")
-    parser.add_argument("--variant", default="zsl-1w")
+    parser.add_argument("--variant", default="zsl-1")
     parser.add_argument("--timeout", type=float, default=180.0)
     args = parser.parse_args()
 

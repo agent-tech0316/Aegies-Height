@@ -59,10 +59,19 @@ class AgentechCommandTests(unittest.TestCase):
         Agentech.forward(speed=0.3, seconds=0, stand_wait=0)
 
         self.assertEqual(os.environ["FF_SDK_DRY_RUN"], "0")
-        self.assertIn(("connect", "D1-DEMO", {"d1_variant": "zsl-1w"}), self.calls)
+        self.assertIn(("connect", "D1-DEMO", {"d1_host": "192.168.234.1", "d1_variant": "zsl-1"}), self.calls)
         self.assertIn(("stand",), self.calls)
         self.assertIn(("cmd_vel", 0.3, 0.0), self.calls)
         self.assertIn(("stop",), self.calls)
+
+    def test_stand_uses_ff_sdk_motion_stand(self):
+        from agentech import Agentech
+
+        Agentech.stand(stand_wait=0)
+
+        self.assertIn(("connect", "D1-DEMO", {"d1_host": "192.168.234.1", "d1_variant": "zsl-1"}), self.calls)
+        self.assertIn(("stand",), self.calls)
+        self.assertIn(("close",), self.calls)
 
     def test_backward_yaw_and_tilt_map_to_ff_sdk_calls(self):
         from agentech import Agentech
@@ -73,7 +82,7 @@ class AgentechCommandTests(unittest.TestCase):
             dog.look_up(angle=1, speed=0.5)
             dog.look_down(angle=1, speed=0.5)
 
-        self.assertIn(("connect", "D1-DEMO", {"d1_host": "192.168.234.1", "d1_variant": "zsl-1w"}), self.calls)
+        self.assertIn(("connect", "D1-DEMO", {"d1_host": "192.168.234.1", "d1_variant": "zsl-1"}), self.calls)
         self.assertIn(("cmd_vel", -0.2, 0.0), self.calls)
         self.assertIn(("cmd_vel", 0.0, 0.25), self.calls)
         self.assertIn(("attitude_control", {"pitch_vel": 0.5}), self.calls)

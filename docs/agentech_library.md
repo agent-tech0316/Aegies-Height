@@ -10,7 +10,7 @@ Agentech.capture_image()
 
 The library hides the lower-level FF SDK calls, safety clamps values, and still lets advanced users pass speed, seconds, angle, and robot connection settings when needed.
 
-Important: `Agentech.forward()` is a real robot command by default. If the FF SDK is installed and the machine can reach the robot, it connects to the Aegis wheeled variant (`zsl-1w`), stands the robot, waits one second for the body to settle, sends `motion.cmd_vel(linear=+speed, angular=0.0)`, waits for the requested time, then stops. Use `dry_run=True` only when you intentionally want practice code that does not move hardware.
+Important: `Agentech.forward()` is a real robot command by default. If the FF SDK is installed and the machine can reach the robot, it connects to the normal robot hotspot host (`192.168.234.1`) with the Aegis EDU / Ultra variant (`zsl-1`), stands the robot with `motion.stand()`, waits one second for the body to settle, sends `motion.cmd_vel(linear=+speed, angular=0.0)`, waits for the requested time, then stops. Use `dry_run=True` only when you intentionally want practice code that does not move hardware.
 
 ## Install
 
@@ -101,7 +101,7 @@ export ROBOT_PASSWORD=...
 python scripts/run_agentech_on_robot.py examples/student_forward.py --host 192.168.234.1
 ```
 
-That runner uploads the local `agentech` package to `/tmp/agentech_runtime`, uploads the student script to `/tmp/agentech_student.py`, sets `PYTHONPATH=/tmp/agentech_runtime`, sets `FF_SDK_D1_VARIANT=zsl-1w`, disables dry-run, and runs `python3 /tmp/agentech_student.py` on the robot.
+That runner uploads the local `agentech` package to `/tmp/agentech_runtime`, uploads the student script to `/tmp/agentech_student.py`, sets `PYTHONPATH=/tmp/agentech_runtime`, sets `FF_SDK_D1_VARIANT=zsl-1`, disables dry-run, and runs `python3 /tmp/agentech_student.py` on the robot.
 
 For real movement to work, the robot runtime still needs the FF SDK wheel installed and the robot must be reachable over the hotspot/SSH network. If those two things are true, `Agentech.forward()` sends the real FF SDK movement command.
 
@@ -175,10 +175,11 @@ Advanced users can set `auto_stand=False` or `stand_wait=0` when they are alread
 
 | Parameter | Used by | Default | Safe range | Meaning |
 | --- | --- | --- | --- | --- |
-| `speed` | `forward`, `backward` | `0.3` | `0.0` to `2.37` | Walking speed in meters per second. |
+| `speed` | `forward` | `0.3` | `0.0` to `2.37` | Forward walking speed in meters per second. |
+| `speed` | `backward` | `0.3` | `0.0` to `2.365` | Backward walking speed in meters per second. |
 | `seconds` | walking, yaw, pitch | `1.0` | `0.0` to `10.0` | How long to hold the command. |
 | `stand_wait` | all movement commands | `1.0` | `0.0` to `10.0` | How long to wait after automatic stand before motion starts. |
-| `angle` | turn, rotate, look up/down | `45` for turns, `10` for tilt | turns: `-360` to `360`; look up: `0` to `20`; look down: `0` to `25` | Human-readable degrees. |
+| `angle` | turn, rotate, look up/down | `45` for turns, `10` for tilt | turns: `-360` to `360`; look up: `0` to `19`; look down: `0` to `21` | Human-readable degrees, using the report_zh pitch limit. |
 | `speed` | `left`, `right`, `rotate` | `0.35` | `0.05` to `2.09` | Yaw rate used to estimate turn duration. |
 | `speed` | `look_up`, `look_down`, `camera_pitch` | `0.12` | `0.03` to `0.5` | Pitch velocity in radians per second. |
 | `hz` | `pitch` | `20` | `1` to `50` | How often attitude control is resent. |
@@ -207,6 +208,23 @@ motion.attitude_control(pitch_vel=...)
 ```
 
 The preview shows this as a body/camera tilt, like the real Aegis height demo. The dog should tilt; the observer camera should not be the thing moving.
+
+## Aegis v0.1 Limits From report_zh
+
+| Capability | Limit |
+| --- | --- |
+| Forward speed | `0.0` to `2.37 m/s` |
+| Backward speed | `0.0` to `2.365 m/s` |
+| Lateral speed | `0.0` to `0.78 m/s` |
+| Linear acceleration | about `2.5 m/s^2` |
+| Turn/yaw rate | up to `2.09 rad/s` (`120 deg/s`) |
+| Slow yaw rate | `1.05 rad/s` (`60 deg/s`) |
+| Look up / forward pitch | `0` to `19 deg` |
+| Look down / backward pitch | `0` to `21 deg` |
+| Roll angle | up to `28 deg` |
+| Body Z range | `-0.06 m` to `+0.11 m` |
+| Gait step length | `0.669 m` |
+| Path tracking error | `7-8%` |
 
 ## Action Card Mapping
 
