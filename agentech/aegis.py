@@ -4,8 +4,12 @@ This module intentionally keeps the public API small:
 
     Agentech.forward()
     Agentech.backward()
+    Agentech.lateral_left()
+    Agentech.lateral_right()
     Agentech.turn_left()
     Agentech.turn_right()
+    Agentech.twist_left()
+    Agentech.twist_right()
     Agentech.rotate()
     Agentech.yaw()
     Agentech.look_up()
@@ -14,10 +18,7 @@ This module intentionally keeps the public API small:
     Agentech.stand()
     Agentech.sit()
     Agentech.stop()
-    Agentech.emergency_stop()
-    Agentech.get_status()
-    Agentech.capture_image()
-    Agentech.run_sequence([...])
+    Agentech.get_battery_status()
 
 The FF SDK is async-first. This wrapper hides that for beginner scripts while
 still offering a persistent context manager for multi-step routines.
@@ -40,7 +41,7 @@ DEFAULT_SPEED_MPS = 0.3
 DEFAULT_YAW_RATE = 0.35
 DEFAULT_PITCH_RATE = 0.12
 DEFAULT_SECONDS = 1.0
-DEFAULT_STAND_WAIT_SECONDS = 1.0
+DEFAULT_STAND_WAIT_SECONDS = 5.0
 MAX_SPEED_MPS = 2.37
 MAX_BACKWARD_SPEED_MPS = 2.365
 MAX_LATERAL_SPEED_MPS = 0.78
@@ -49,8 +50,8 @@ MAX_YAW_RATE = 2.09
 SLOW_YAW_RATE = 1.05
 MAX_PITCH_RATE = 0.5
 MAX_SECONDS = 10.0
-MAX_LOOK_UP_DEGREES = 19.0
-MAX_LOOK_DOWN_DEGREES = 21.0
+MAX_LOOK_UP_DEGREES = 25.0
+MAX_LOOK_DOWN_DEGREES = 25.0
 MAX_ROLL_DEGREES = 28.0
 MAX_TEXT_LENGTH = 180
 
@@ -243,6 +244,29 @@ class Robot:
             return await self._stop()
         return None
 
+    def lateral_left(self, speed: float = 0.2, seconds: float = DEFAULT_SECONDS, *, stop: bool = True) -> Any:
+        return self._sync(self._lateral_left(speed=speed, seconds=seconds, stop=stop))
+
+    async def _lateral_left(self, speed: float = 0.2, seconds: float = DEFAULT_SECONDS, *, stop: bool = True) -> Any:
+        return await self._lateral(speed=abs(speed), seconds=seconds, stop=stop)
+
+    def lateral_right(self, speed: float = 0.2, seconds: float = DEFAULT_SECONDS, *, stop: bool = True) -> Any:
+        return self._sync(self._lateral_right(speed=speed, seconds=seconds, stop=stop))
+
+    async def _lateral_right(self, speed: float = 0.2, seconds: float = DEFAULT_SECONDS, *, stop: bool = True) -> Any:
+        return await self._lateral(speed=-abs(speed), seconds=seconds, stop=stop)
+
+    async def _lateral(self, speed: float = 0.2, seconds: float = DEFAULT_SECONDS, *, stop: bool = True) -> Any:
+        speed = _clamp(speed, -MAX_LATERAL_SPEED_MPS, MAX_LATERAL_SPEED_MPS, "speed")
+        seconds = _clamp(seconds, 0.0, MAX_SECONDS, "seconds")
+        await self._prepare_motion()
+        self._is_stopped = speed == 0.0
+        await self.session.motion.cmd_vel(linear=0.0, angular=0.0, lateral=speed)
+        await asyncio.sleep(seconds)
+        if stop:
+            return await self._stop()
+        return None
+
     def backward(self, speed: float = DEFAULT_SPEED_MPS, seconds: float = DEFAULT_SECONDS, *, stop: bool = True) -> Any:
         return self._sync(self._backward(speed=speed, seconds=seconds, stop=stop))
 
@@ -305,6 +329,18 @@ class Robot:
     async def _right(self, angle: float = 45.0, speed: float = DEFAULT_YAW_RATE, *, stop: bool = True) -> Any:
         return await self._turn_right(angle=angle, speed=speed, stop=stop)
 
+    def twist_left(self, angle: float = 28.0, speed: float = DEFAULT_YAW_RATE, *, stop: bool = True) -> Any:
+        return self._sync(self._twist_left(angle=angle, speed=speed, stop=stop))
+
+    async def _twist_left(self, angle: float = 28.0, speed: float = DEFAULT_YAW_RATE, *, stop: bool = True) -> Any:
+        return await self._rotate(angle=abs(angle), speed=speed, stop=stop)
+
+    def twist_right(self, angle: float = 28.0, speed: float = DEFAULT_YAW_RATE, *, stop: bool = True) -> Any:
+        return self._sync(self._twist_right(angle=angle, speed=speed, stop=stop))
+
+    async def _twist_right(self, angle: float = 28.0, speed: float = DEFAULT_YAW_RATE, *, stop: bool = True) -> Any:
+        return await self._rotate(angle=-abs(angle), speed=speed, stop=stop)
+
     def pitch(self, speed: float = DEFAULT_PITCH_RATE, seconds: float = 0.5, *, stop: bool = True, hz: float = 20.0) -> Any:
         return self._sync(self._pitch(speed=speed, seconds=seconds, stop=stop, hz=hz))
 
@@ -359,6 +395,12 @@ class Robot:
 
     def get_status(self) -> dict[str, Any]:
         return self._sync(self._get_status())
+
+    def get_battery_status(self) -> Any:
+        return self._sync(self._get_battery_status())
+
+    async def _get_battery_status(self) -> Any:
+        return _jsonable(await self.session.state.battery())
 
     async def _get_status(self) -> dict[str, Any]:
         status = await self.session.state.status()
@@ -426,7 +468,7 @@ class Agentech:
     def robot(
         target: str = DEFAULT_TARGET,
         *,
-        host: str | None = None,
+        host: str | None = DEFAULT_HOST,
         variant: str | None = DEFAULT_VARIANT,
         dry_run: bool = False,
         auto_stop: bool = True,
@@ -471,6 +513,14 @@ class Agentech:
         return cls._once(lambda dog: dog._backward(speed=speed, seconds=seconds, stop=stop), **connect_kwargs)
 
     @classmethod
+    def lateral_left(cls, speed: float = 0.2, seconds: float = DEFAULT_SECONDS, *, stop: bool = True, **connect_kwargs: Any) -> Any:
+        return cls._once(lambda dog: dog._lateral_left(speed=speed, seconds=seconds, stop=stop), **connect_kwargs)
+
+    @classmethod
+    def lateral_right(cls, speed: float = 0.2, seconds: float = DEFAULT_SECONDS, *, stop: bool = True, **connect_kwargs: Any) -> Any:
+        return cls._once(lambda dog: dog._lateral_right(speed=speed, seconds=seconds, stop=stop), **connect_kwargs)
+
+    @classmethod
     def yaw(cls, speed: float = DEFAULT_YAW_RATE, seconds: float = DEFAULT_SECONDS, *, stop: bool = True, **connect_kwargs: Any) -> Any:
         return cls._once(lambda dog: dog._yaw(speed=speed, seconds=seconds, stop=stop), **connect_kwargs)
 
@@ -495,6 +545,14 @@ class Agentech:
         return cls.turn_right(angle=angle, speed=speed, stop=stop, **connect_kwargs)
 
     @classmethod
+    def twist_left(cls, angle: float = 28.0, speed: float = DEFAULT_YAW_RATE, *, stop: bool = True, **connect_kwargs: Any) -> Any:
+        return cls._once(lambda dog: dog._twist_left(angle=angle, speed=speed, stop=stop), **connect_kwargs)
+
+    @classmethod
+    def twist_right(cls, angle: float = 28.0, speed: float = DEFAULT_YAW_RATE, *, stop: bool = True, **connect_kwargs: Any) -> Any:
+        return cls._once(lambda dog: dog._twist_right(angle=angle, speed=speed, stop=stop), **connect_kwargs)
+
+    @classmethod
     def pitch(cls, speed: float = DEFAULT_PITCH_RATE, seconds: float = 0.5, *, stop: bool = True, hz: float = 20.0, **connect_kwargs: Any) -> Any:
         return cls._once(lambda dog: dog._pitch(speed=speed, seconds=seconds, stop=stop, hz=hz), **connect_kwargs)
 
@@ -517,6 +575,10 @@ class Agentech:
     @classmethod
     def get_status(cls, **connect_kwargs: Any) -> dict[str, Any]:
         return cls._once(lambda dog: dog._get_status(), **connect_kwargs)
+
+    @classmethod
+    def get_battery_status(cls, **connect_kwargs: Any) -> Any:
+        return cls._once(lambda dog: dog._get_battery_status(), **connect_kwargs)
 
     @classmethod
     def capture_image(cls, output: str | Path = "agentech_capture.jpg", source: str = "default", **connect_kwargs: Any) -> str | None:
