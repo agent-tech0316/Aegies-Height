@@ -17,6 +17,9 @@ class FakeMotion:
     async def stand(self):
         self.calls.append(("stand",))
 
+    async def sit(self):
+        self.calls.append(("sit",))
+
     async def attitude_control(self, **kwargs):
         self.calls.append(("attitude_control", kwargs))
 
@@ -92,6 +95,15 @@ class AgentechCommandTests(unittest.TestCase):
         self.assertIn(("stand",), self.calls)
         self.assertIn(("close",), self.calls)
 
+    def test_sit_uses_ff_sdk_motion_sit(self):
+        from agentech import Agentech
+
+        Agentech.sit()
+
+        self.assertIn(("connect", "D1-DEMO", {"d1_host": "192.168.234.1", "d1_variant": "zsl-1"}), self.calls)
+        self.assertIn(("sit",), self.calls)
+        self.assertIn(("close",), self.calls)
+
     def test_get_battery_status_reads_state_battery(self):
         from agentech import Agentech
 
@@ -101,6 +113,15 @@ class AgentechCommandTests(unittest.TestCase):
         self.assertIn(("connect", "D1-DEMO", {"d1_host": "192.168.234.1", "d1_variant": "zsl-1"}), self.calls)
         self.assertIn(("battery",), self.calls)
         self.assertIn(("close",), self.calls)
+
+    def test_robot_get_battery_status_reads_state_battery(self):
+        from agentech import Agentech
+
+        with Agentech.robot(stand_wait=0) as dog:
+            battery = dog.get_battery_status()
+
+        self.assertEqual(battery, {"percent": 87})
+        self.assertIn(("battery",), self.calls)
 
     def test_backward_yaw_and_tilt_map_to_ff_sdk_calls(self):
         from agentech import Agentech

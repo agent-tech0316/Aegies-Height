@@ -77,6 +77,12 @@ def _run_sync(coro: Any) -> Any:
     )
 
 
+async def _maybe_await(value: Any) -> Any:
+    if inspect.isawaitable(value):
+        return await value
+    return value
+
+
 def _jsonable(value: Any) -> Any:
     if value is None or isinstance(value, (str, int, float, bool)):
         return value
@@ -187,9 +193,7 @@ class Robot:
         stand = getattr(motion, "stand", None)
         if stand is None:
             raise RuntimeError("FF SDK motion.stand() is not available on this robot session.")
-        result = stand()
-        if inspect.isawaitable(result):
-            result = await result
+        result = await _maybe_await(stand())
         self._is_standing = True
         wait = _clamp(self.stand_wait, 0.0, MAX_SECONDS, "stand_wait")
         if wait:
@@ -202,9 +206,12 @@ class Robot:
     async def _sit(self) -> Any:
         motion = self.session.motion
         if hasattr(motion, "sit"):
-            result = await motion.sit()
+            result = await _maybe_await(motion.sit())
         else:
-            result = await motion.do_preset("lie_down")
+            do_preset = getattr(motion, "do_preset", None)
+            if do_preset is None:
+                raise RuntimeError("FF SDK motion.sit() or motion.do_preset('lie_down') is required to sit.")
+            result = await _maybe_await(do_preset("lie_down"))
         self._is_standing = False
         self._is_stopped = True
         return result
@@ -400,7 +407,10 @@ class Robot:
         return self._sync(self._get_battery_status())
 
     async def _get_battery_status(self) -> Any:
-        return _jsonable(await self.session.state.battery())
+        battery = getattr(self.session.state, "battery", None)
+        if battery is None:
+            raise RuntimeError("FF SDK state.battery() is not available on this robot session.")
+        return _jsonable(await _maybe_await(battery()))
 
     async def _get_status(self) -> dict[str, Any]:
         status = await self.session.state.status()
