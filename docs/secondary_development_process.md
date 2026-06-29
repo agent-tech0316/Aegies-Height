@@ -1,4 +1,4 @@
-﻿# Aegies Height Secondary Development Guide
+# Aegies Height Secondary Development Guide
 
 This document describes what we built, why it counts as secondary development,
 and how to repeat the same process with another robot dog, another camera, or
@@ -523,7 +523,7 @@ examples/vision/rt_person_tilt_sequence.py
 D1 attitude example:
 
 ```text
-examples/motion/attitude.py
+../agentech_sdk/agentech_sdk/examples/motion/attitude.py
 ```
 
 Developer guidance we received:
@@ -779,7 +779,7 @@ PY
 Check stand/attitude scripts only when the robot is safely supported:
 
 ```bash
-python3 examples/motion/attitude.py
+python3 ../agentech_sdk/agentech_sdk/examples/motion/attitude.py
 ```
 
 Do not add damping to the final RT flow unless the user explicitly requests a
@@ -965,7 +965,7 @@ Do not claim final accuracy until this validation set is done.
 | `examples/vision/read_depth_foreground_object.py` | Foreground-vs-background depth test. |
 | `examples/vision/read_codey_pitch.py` | Reads Codey pitch over USB serial. |
 | `examples/vision/codey_pitch.py` | Reusable Codey pitch helper. |
-| `examples/motion/attitude.py` | SDK attitude-control example. |
+| `../agentech_sdk/agentech_sdk/examples/motion/attitude.py` | SDK attitude-control example. |
 | `scripts/robot_motion_server.py` | Long-running robot motion session/server. |
 | `scripts/pi_height_dashboard.py` | Pi web dashboard for phone/laptop control. |
 | `models/yolov8n.onnx` | YOLO person detector model. |

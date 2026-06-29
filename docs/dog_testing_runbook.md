@@ -21,9 +21,9 @@ docs/accepted_laser_images_cleanup.md    # keep only accepted laser images and c
 examples/vision/grid_laser_calibration.py # grid + laser calibration commands
 examples/vision/height_calculator.py     # YOLO/distance/height helper commands
 examples/vision/tilt_telemetry_probe.py  # tilt telemetry test, for later
-examples/d1/udp_walk.py                  # SDK walking demo from the vendor docs
-examples/d1/raw_zsibot_move.py           # project-specific raw movement test
-examples/d1/raw_zsibot_sequence.py       # project-specific raw movement sequence
+../agentech_sdk/agentech_sdk/examples/d1/udp_walk.py # SDK walking demo from the vendor docs
+../agentech_sdk/examples/d1/raw_zsibot_move.py       # project-specific raw movement test
+../agentech_sdk/examples/d1/raw_zsibot_sequence.py   # project-specific raw movement sequence
 models/yolov8n.onnx                      # YOLO model
 requirements-vision.txt                  # Python vision dependencies
 test_camera.jpg                          # sample grid image
@@ -85,7 +85,7 @@ Run these commands from your Mac terminal, not inside the SSH session:
 ```bash
 ssh firefly@192.168.234.1 'rm -rf ~/Aegies-Height && mkdir -p ~/Aegies-Height'
 
-cd "/Users/agentech/Documents/Faraday Future Robot SDK"
+cd "/Users/agentech/Documents/Aegies-Height"
 
 rsync -av --delete \
   --exclude '.git/' \
@@ -98,6 +98,15 @@ annotated reference image at:
 
 ```text
 ~/Aegies-Height/docs/images/l_shape_grid_box_labels.jpg
+```
+
+The Agentech library and FF SDK devkit are now a separate sibling project. If
+the robot needs SDK wheels or vendor examples, copy or clone that project beside
+this one so these paths exist:
+
+```text
+~/Aegies-Height
+~/agentech_sdk
 ```
 
 Then SSH in:
@@ -143,13 +152,13 @@ python3 -m pip install -r requirements-vision.txt
 If you need the SDK wheel on the robot:
 
 ```bash
-python3 -m pip install wheels/ff_sdk-*-linux_aarch64.whl
+python3 -m pip install --no-index --find-links ../agentech_sdk/agentech_sdk/wheels ff_sdk==0.1.0a2
 ```
 
 If testing from a Linux laptop connected to the dog:
 
 ```bash
-python3 -m pip install wheels/ff_sdk-*-linux_x86_64.whl
+python3 -m pip install --no-index --find-links ../agentech_sdk/agentech_sdk/wheels ff_sdk==0.1.0a2
 ```
 
 ## 4. Quick Software Checks
@@ -194,26 +203,26 @@ The vendor docs point to the SDK walking demo:
 
 ```bash
 cd ~/Aegies-Height
-FF_SDK_D1_VARIANT=zsl-1 FF_SDK_D1_HOST=192.168.234.1 python3 examples/d1/udp_walk.py
+FF_SDK_D1_VARIANT=zsl-1 FF_SDK_D1_HOST=192.168.234.1 python3 ../agentech_sdk/agentech_sdk/examples/d1/udp_walk.py
 ```
 
 The project-specific movement scripts from the earlier working path are:
 
 ```bash
 cd ~/Aegies-Height
-python3 examples/d1/raw_zsibot_sequence.py --host 192.168.234.1 --variant zsl-1
-python3 examples/d1/raw_zsibot_move.py forward --host 192.168.234.1 --variant zsl-1 --skip-stand --pre-move-delay 1.0
-python3 examples/d1/raw_zsibot_move.py back --host 192.168.234.1 --variant zsl-1
-python3 examples/d1/raw_zsibot_move.py yaw_left --host 192.168.234.1 --variant zsl-1
-python3 examples/d1/raw_zsibot_move.py zero --host 192.168.234.1 --variant zsl-1
+python3 ../agentech_sdk/examples/d1/raw_zsibot_sequence.py --host 192.168.234.1 --variant zsl-1
+python3 ../agentech_sdk/examples/d1/raw_zsibot_move.py forward --host 192.168.234.1 --variant zsl-1 --skip-stand --pre-move-delay 1.0
+python3 ../agentech_sdk/examples/d1/raw_zsibot_move.py back --host 192.168.234.1 --variant zsl-1
+python3 ../agentech_sdk/examples/d1/raw_zsibot_move.py yaw_left --host 192.168.234.1 --variant zsl-1
+python3 ../agentech_sdk/examples/d1/raw_zsibot_move.py zero --host 192.168.234.1 --variant zsl-1
 ```
 
 For move-forward-only tests, first get the robot standing and stable, then send
 only the forward command:
 
 ```bash
-python3 examples/d1/raw_zsibot_move.py zero --host 192.168.234.1 --variant zsl-1 --stand-wait 5.0 --seconds 1.0
-python3 examples/d1/raw_zsibot_move.py forward --host 192.168.234.1 --variant zsl-1 --skip-stand --pre-move-delay 1.0 --warmup-seconds 1.5 --seconds 1.0 --stop-seconds 1.0
+python3 ../agentech_sdk/examples/d1/raw_zsibot_move.py zero --host 192.168.234.1 --variant zsl-1 --stand-wait 5.0 --seconds 1.0
+python3 ../agentech_sdk/examples/d1/raw_zsibot_move.py forward --host 192.168.234.1 --variant zsl-1 --skip-stand --pre-move-delay 1.0 --warmup-seconds 1.5 --seconds 1.0 --stop-seconds 1.0
 ```
 
 If the movement scripts connect but print:
@@ -230,7 +239,7 @@ For posture-only sanity check:
 
 ```bash
 cd ~/Aegies-Height
-python3 examples/motion/stand_damping.py --target D1-DEMO
+python3 ../agentech_sdk/agentech_sdk/examples/motion/stand_damping.py --target D1-DEMO
 ```
 
 Check calibration script commands:
